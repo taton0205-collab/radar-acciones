@@ -145,6 +145,35 @@
   .nitem .top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: var(--muted); }
   .badge { background: var(--accent-soft); color: var(--accent); font-weight: 700; padding: 2px 8px; border-radius: 6px; font-size: 12px; }
   .nitem .t { font-size: 15px; font-weight: 500; }
+  .pcard { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 8px; }
+  .resumen { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0 12px; }
+  .resumen .kv { background: var(--card); border: 1px solid var(--line); }
+  .resumen .kv b { font-size: 18px; }
+  .ph { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .ph .tk { font-size: 17px; }
+  .ph .pr { text-align: right; font-variant-numeric: tabular-nums; }
+  .ph .pr b { display: block; font-size: 17px; }
+  .ph .pr span { font-size: 12px; }
+  .up { color: var(--accent); } .down { color: var(--low); }
+  .gan { display: flex; gap: 14px; margin-top: 10px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+  .gan b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .gan b.up { color: var(--accent); } .gan b.down { color: var(--low); }
+  .rango .mk.izq::after { left: -4px; transform: none; }
+  .rango .mk.der::after { left: auto; right: -4px; transform: none; }
+  .rango { position: relative; height: 8px; border-radius: 8px; margin: 26px 0 6px;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--low) 55%, transparent), var(--chip) 45%, var(--chip) 55%, color-mix(in srgb, var(--accent) 55%, transparent)); }
+  .rango .mk { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 16px; height: 16px; border-radius: 50%; background: var(--text); border: 3px solid var(--card); }
+  .rango .mk::after { content: attr(data-l); position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); font-size: 11px; font-weight: 700; white-space: nowrap; color: var(--text); }
+  .rango .ppc { position: absolute; top: -4px; width: 2px; height: 16px; background: var(--muted); }
+  .rlbl { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .rlbl .c { text-align: center; }
+  .estado { margin-top: 10px; font-size: 13px; font-weight: 600; padding: 7px 10px; border-radius: 8px; background: var(--chip); }
+  .estado.ok { background: var(--accent-soft); color: var(--accent); }
+  .estado.bad { background: color-mix(in srgb, var(--low) 16%, transparent); color: var(--low); }
+  .estado.warn { background: color-mix(in srgb, var(--mid) 18%, transparent); color: var(--mid); }
+  .arow { display: flex; justify-content: space-between; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 11px 14px; margin-bottom: 6px; font-size: 14px; }
+  .arow small { display: block; color: var(--muted); font-size: 12px; }
+  .btn { display: block; text-align: center; padding: 11px; border-radius: 10px; background: var(--chip); color: var(--text); text-decoration: none; font-weight: 600; font-size: 14px; margin-top: 12px; }
   footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; }
   @media (max-width: 420px) {
     .grid { grid-template-columns: repeat(2, 1fr); }
@@ -179,6 +208,10 @@
     <div class="feed" id="feed"></div>
   </section>
 
+  <section class="view" id="vCartera">
+    <div id="cartera"><div class="msg">Cargando…</div></div>
+  </section>
+
   <footer>Herramienta para filtrar candidatas, no es una recomendación de compra.<br>Datos de Yahoo Finance.</footer>
 </div>
 
@@ -191,8 +224,13 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h13v14a2 2 0 0 0 2 2H6a2 2 0 0 1-2-2z"/><path d="M17 9h3v10a2 2 0 0 1-2 2"/><path d="M8 9h5M8 13h5M8 17h3"/></svg>
     Noticias
   </button>
+  <button id="tCartera">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h15V9H5a2 2 0 0 1-2-2z"/><circle cx="16" cy="14.5" r="1.3" fill="currentColor"/></svg>
+    Mi cuenta
+  </button>
 </nav>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script>
 const TOP_N = 15;
 let datos = [], maxSector = 3, modo = "top", sector = "Todos", busqueda = "";
@@ -270,13 +308,137 @@ function renderNoticias() {
 }
 
 function irA(vista) {
-  const rank = vista === "ranking";
-  $("vRanking").classList.toggle("on", rank);
-  $("vNoticias").classList.toggle("on", !rank);
-  $("tRanking").classList.toggle("on", rank);
-  $("tNoticias").classList.toggle("on", !rank);
-  if (!rank) renderNoticias();
+  [["ranking", "Ranking"], ["noticias", "Noticias"], ["cartera", "Cartera"]].forEach(([v, id]) => {
+    $("v" + id).classList.toggle("on", v === vista);
+    $("t" + id).classList.toggle("on", v === vista);
+  });
+  if (vista === "noticias") renderNoticias();
+  if (vista === "cartera") cargarCartera();
   window.scrollTo(0, 0);
+}
+
+// ---------------- Cuenta (Supabase) ----------------
+const SUPABASE_URL = "https://iyejwbchituodjjeailw.supabase.co";
+const SUPABASE_KEY = "sb_publishable_nxdbOSIfsXbw7ztNvWjQtQ_rGQCiGfU";
+const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+let sesion = null, perfil = null, mailPendiente = "";
+
+function cargarCartera() { renderCuenta(); }
+
+async function leerPerfil() {
+  if (!sesion) { perfil = null; return; }
+  const { data } = await sb.from("perfiles").select("*").eq("id", sesion.user.id).maybeSingle();
+  perfil = data;
+}
+
+function avisoCuenta(texto, tipo = "") {
+  const el = $("cuentaMsg");
+  if (el) { el.textContent = texto; el.className = "estado " + tipo; el.style.display = texto ? "block" : "none"; }
+}
+
+async function renderCuenta() {
+  const box = $("cartera");
+  if (!sb) { box.innerHTML = `<div class="msg">No se pudo cargar el sistema de cuentas. Revisá tu conexión.</div>`; return; }
+
+  // 1) Sin sesión: login por mail
+  if (!sesion) {
+    box.innerHTML = `<div class="pcard">
+      <div class="tk" style="margin-bottom:4px">Ingresar</div>
+      <div class="name" style="white-space:normal">Te mandamos un mail con un link y un código para entrar. No hace falta contraseña.</div>
+      <input type="email" id="loginMail" placeholder="tu@mail.com" autocomplete="email" value="${esc(mailPendiente)}" style="width:100%;margin-top:12px;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit">
+      <button class="btn" id="loginBtn" style="width:100%;border:0;cursor:pointer;background:var(--accent);color:#fff">Enviarme el link</button>
+      <div id="codigoBox" style="display:${mailPendiente ? "block" : "none"};margin-top:14px">
+        <div class="name" style="white-space:normal">¿Te llegó un código de 6 números? Escribilo acá:</div>
+        <input inputmode="numeric" id="loginCodigo" maxlength="8" placeholder="123456" style="width:100%;margin-top:8px;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit;letter-spacing:.3em;text-align:center">
+        <button class="btn" id="codigoBtn" style="width:100%;border:0;cursor:pointer">Entrar con el código</button>
+      </div>
+      <div id="cuentaMsg" class="estado" style="display:none"></div>
+    </div>`;
+    $("loginBtn").onclick = async () => {
+      const mail = $("loginMail").value.trim();
+      if (!/^\S+@\S+\.\S+$/.test(mail)) return avisoCuenta("Escribí un mail válido.", "bad");
+      $("loginBtn").disabled = true; avisoCuenta("Enviando…");
+      const { error } = await sb.auth.signInWithOtp({ email: mail, options: { emailRedirectTo: location.origin + location.pathname } });
+      $("loginBtn").disabled = false;
+      if (error) return avisoCuenta("No se pudo enviar: " + error.message, "bad");
+      mailPendiente = mail;
+      $("codigoBox").style.display = "block";
+      avisoCuenta("¡Listo! Revisá tu mail (y la carpeta de spam).", "ok");
+    };
+    $("codigoBtn").onclick = async () => {
+      const token = $("loginCodigo").value.trim();
+      const mail = $("loginMail").value.trim() || mailPendiente;
+      if (!token) return avisoCuenta("Escribí el código.", "bad");
+      avisoCuenta("Verificando…");
+      const { error } = await sb.auth.verifyOtp({ email: mail, token, type: "email" });
+      if (error) avisoCuenta("Código incorrecto o vencido. Pedí uno nuevo.", "bad");
+    };
+    return;
+  }
+
+  await leerPerfil();
+  const cabecera = `<div class="pcard"><div class="ph">
+      <div><div class="tk">${esc(perfil?.nombre || "Mi cuenta")}${perfil?.es_admin ? ' <span class="new">ADMIN</span>' : ""}</div>
+      <div class="name">${esc(sesion.user.email)}</div></div>
+      <button class="chip" id="salirBtn">Salir</button></div></div>`;
+
+  // 2) Sesión pero sin aprobar
+  if (!perfil || !perfil.aprobado) {
+    box.innerHTML = cabecera + `<div class="msg">⏳ Tu cuenta está <b>esperando aprobación</b>.<br>Cuando el administrador te habilite vas a poder usar tu cartera.</div>`;
+    $("salirBtn").onclick = salir;
+    return;
+  }
+
+  // 3) Aprobado
+  let html = cabecera + `<div class="pcard">
+      <div class="lbl" style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Tu nombre</div>
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <input id="nombreInp" value="${esc(perfil.nombre || "")}" placeholder="Cómo te llamás" maxlength="40" style="flex:1;min-width:0;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit">
+        <button class="chip" id="nombreBtn">Guardar</button>
+      </div>
+    </div>
+    <div class="msg">💼 Tu cartera llega en la próxima etapa.</div>`;
+
+  // 4) Panel de admin
+  if (perfil.es_admin) html += `<h3>Usuarios</h3><div id="usuarios"><div class="msg">Cargando…</div></div>`;
+  box.innerHTML = html;
+  $("salirBtn").onclick = salir;
+  $("nombreBtn").onclick = async () => {
+    await sb.rpc("cambiar_nombre", { nuevo: $("nombreInp").value });
+    renderCuenta();
+  };
+  if (perfil.es_admin) renderUsuarios();
+}
+
+async function renderUsuarios() {
+  const { data, error } = await sb.from("perfiles").select("id,email,nombre,aprobado,es_admin,creado").order("creado");
+  if (error) { $("usuarios").innerHTML = `<div class="msg">Error: ${esc(error.message)}</div>`; return; }
+  const pendientes = data.filter((u) => !u.aprobado).length;
+  $("usuarios").innerHTML = (pendientes ? `<div class="estado warn" style="margin:0 0 8px">🔔 ${pendientes} esperando aprobación</div>` : "") +
+    data.map((u) => `<div class="arow"><span><b>${esc(u.nombre || u.email)}</b>${u.es_admin ? ' <span class="new">ADMIN</span>' : ""}
+        <small>${esc(u.email)} · ${u.aprobado ? "✅ habilitado" : "⏳ en espera"}</small></span>
+        ${u.id === sesion.user.id ? "" : u.aprobado
+          ? `<button class="chip" data-u="${u.id}" data-a="0">Quitar</button>`
+          : `<button class="chip on" data-u="${u.id}" data-a="1">Aprobar</button>`}
+      </div>`).join("");
+  $("usuarios").querySelectorAll("button[data-u]").forEach((b) => b.onclick = async () => {
+    if (b.dataset.a === "0" && !confirm("¿Quitarle el acceso a este usuario?")) return;
+    b.disabled = true;
+    await sb.from("perfiles").update({ aprobado: b.dataset.a === "1" }).eq("id", b.dataset.u);
+    renderUsuarios();
+  });
+}
+
+async function salir() { await sb.auth.signOut(); }
+
+if (sb) {
+  sb.auth.onAuthStateChange((_evento, s) => {
+    sesion = s;
+    if (s) mailPendiente = "";
+    if ($("vCartera").classList.contains("on")) renderCuenta();
+  });
+  // Si venís del link del mail, abrir directo la pestaña de cuenta
+  if (/access_token|code=|error_description/.test(location.hash + location.search)) setTimeout(() => irA("cartera"), 0);
 }
 
 let pestanas = {};  // ticker -> "a" (análisis) o "n" (noticias)
@@ -468,6 +630,7 @@ $("nchips").addEventListener("click", (e) => {
 });
 $("tRanking").onclick = () => irA("ranking");
 $("tNoticias").onclick = () => { filtroNoticias = "Todas"; irA("noticias"); };
+$("tCartera").onclick = () => irA("cartera");
 $("q").addEventListener("input", (e) => { busqueda = e.target.value.trim(); render(); });
 $("bTop").onclick = () => { modo = "top"; $("bTop").classList.add("on"); $("bAll").classList.remove("on"); render(); };
 $("bAll").onclick = () => { modo = "all"; $("bAll").classList.add("on"); $("bTop").classList.remove("on"); render(); };
