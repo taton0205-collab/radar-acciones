@@ -89,6 +89,7 @@
     color: var(--text); text-decoration: none; font-size: 13px; font-weight: 600;
     border: 0; font-family: inherit; cursor: pointer;
   }
+  .links .news-btn { background: var(--accent-soft); color: var(--accent); }
   .ctabs { display: flex; gap: 6px; margin-bottom: 12px; }
   .ctabs button {
     flex: 1; border: 0; background: var(--chip); color: var(--muted); font: inherit; font-size: 13px;
@@ -441,7 +442,7 @@ async function renderCuenta() {
 
 // ================= MI CARTERA =================
 const SUG_VENTA = 25, SUG_STOP = 10;   // % sugeridos sobre el PPC
-let precios = null, ops = [], objs = {}, posiciones = [];
+let precios = null, ops = [], objs = {}, posiciones = [], seguidas = [];
 
 const ars = (v, dec) => v == null ? "–" : "$ " + Number(v).toLocaleString("es-AR", { minimumFractionDigits: dec ?? (Math.abs(v) >= 1000 ? 0 : 2), maximumFractionDigits: dec ?? (Math.abs(v) >= 1000 ? 0 : 2) });
 const pctTxt = (v) => v == null ? "–" : (v >= 0 ? "+" : "") + num(v) + "%";
@@ -513,11 +514,13 @@ function calcularPosiciones() {
 
 async function renderMiCartera() {
   const box = $("carteraBox");
-  const [r1, r2] = await Promise.all([
+  const [r1, r2, r3] = await Promise.all([
     sb.from("operaciones").select("*").order("fecha"),
     sb.from("objetivos").select("*"),
+    sb.from("seguimiento").select("*").order("creado"),
     cargarPrecios(),
   ]);
+  seguidas = r3?.data || [];
   if (r1.error) { box.innerHTML = `<div class="msg">Error: ${esc(r1.error.message)}</div>`; return; }
   ops = r1.data || [];
   objs = Object.fromEntries((r2.data || []).map((o) => [o.ticker, o]));
@@ -537,7 +540,7 @@ async function renderMiCartera() {
     </div>`;
 
   if (!ops.length) {
-    box.innerHTML = html + `<div class="msg">Todavía no cargaste operaciones.<br>Tocá <b>+ Compra</b> para cargar tu primer CEDEAR.</div>`;
+    box.innerHTML = html + `<div class="msg">Todavía no cargaste operaciones.<br>Tocá <b>+ Compra</b> para cargar tu primer CEDEAR.</div>` + seccionSeguimiento();
     conectarBotones(); return;
   }
 
@@ -551,8 +554,67 @@ async function renderMiCartera() {
 
   html += abiertas.map(tarjetaPos).join("");
   if (cerradas.length) html += `<h3>Vendidas</h3>` + cerradas.map((p) => `<div class="arow"><span><b>${esc(p.ticker)}</b><small>Resultado: <span class="${clsSigno(p.realizado)}">${p.realizado >= 0 ? "+" : "−"}${ars(Math.abs(p.realizado))}</span></small></span><button class="chip" data-movs="${esc(p.ticker)}">Ver</button></div>`).join("");
+  html += seccionSeguimiento();
   box.innerHTML = html;
   conectarBotones();
+}
+
+// ---------- Seguimiento (acciones que todavía no tenés) ----------
+function seccionSeguimiento() {
+  const filas = seguidas.map((s) => {
+    const pr = precios?.tickers?.[s.ticker] || {};
+    const precio = pr.ars ?? null, obj = s.precio_compra ? +s.precio_compra : null;
+    const nota = datos.find((a) => a.Ticker === s.ticker)?.Puntaje;
+    let estado = "";
+    if (precio == null) estado = `<small>⏳ precio en la próxima actualización</small>`;
+    else if (obj && precio <= obj) estado = `<small class="up"><b>✅ Llegó a tu precio de compra</b></small>`;
+    else if (obj) estado = `<small>Falta bajar ${num((1 - obj / precio) * 100)}% · comprar a ${ars(obj)}</small>`;
+    else estado = `<small>Sin precio de compra</small>`;
+    return `<div class="arow">
+      <span><b>${esc(s.ticker)}</b>${nota != null ? ` <span class="chip" style="padding:2px 7px;font-size:11px">radar ${Math.round(nota)}</span>` : ""}
+        <small>${precio != null ? `Hoy ${ars(precio)}${pr.ars_prev ? ` · <span class="${clsSigno(precio - pr.ars_prev)}">${pctTxt((precio / pr.ars_prev - 1) * 100)}</span>` : ""}` : ""}${s.nota ? ` · ${esc(s.nota)}` : ""}</small>${estado}</span>
+      <button class="chip" data-seg="${esc(s.ticker)}">Editar</button>
+    </div>`;
+  }).join("");
+  return `<h3>👀 Seguimiento</h3>
+    ${filas || `<div class="sub" style="margin-bottom:8px">Acciones que querés comprar si bajan a cierto precio. También podés agregarlas desde el Ranking con <b>👀 Seguir</b>.</div>`}
+    <button class="btn" id="btnSeguir" style="width:100%;border:0;cursor:pointer;margin-top:6px">+ Seguir una acción</button>`;
+}
+
+function formSeguimiento(ticker = "") {
+  const s = seguidas.find((x) => x.ticker === ticker);
+  const pr = precios?.tickers?.[ticker]?.ars;
+  const nota = datos.find((a) => a.Ticker === ticker);
+  abrirModal(`<h2>${s ? "Editar seguimiento" : "Seguir una acción"}</h2>
+    ${nota ? `<div class="sub" style="margin-bottom:10px">${esc(nota.Empresa)} · nota radar ${Math.round(nota.Puntaje)}</div>` : ""}
+    <div class="campo"><label>Ticker</label><input id="sTicker" value="${esc(ticker)}" ${s ? "disabled" : ""} autocapitalize="characters" placeholder="AAPL"></div>
+    <div class="campo"><label>Avisarme si el CEDEAR baja de ($)</label><input id="sPrecio" type="number" inputmode="decimal" step="any" value="${s?.precio_compra ? +s.precio_compra : ""}" placeholder="${pr ? Math.round(pr * 0.95) : "15000"}">
+      <small>${pr ? `Hoy está a ${ars(pr)}. Ejemplo: −5% sería ${ars(pr * 0.95)}.` : "Precio en pesos de 1 CEDEAR."}</small></div>
+    <div class="campo"><label>Nota (opcional)</label><input id="sNota" value="${esc(s?.nota || "")}" maxlength="60" placeholder="Ej: esperar resultados"></div>
+    <div id="sMsg" class="estado bad" style="display:none"></div>
+    <div class="acciones">${s ? `<button id="sBorrar">Dejar de seguir</button>` : `<button id="sCancelar">Cancelar</button>`}<button class="pri" id="sGuardar">Guardar</button></div>`);
+  if (s) $("sBorrar").onclick = async () => { await sb.from("seguimiento").delete().eq("ticker", ticker); cerrarModal(); renderMiCartera(); };
+  else $("sCancelar").onclick = cerrarModal;
+  $("sGuardar").onclick = async () => {
+    const t = $("sTicker").value.trim().toUpperCase();
+    if (!/^[A-Z0-9.\-]{1,10}$/.test(t)) { $("sMsg").textContent = "Escribí un ticker válido."; $("sMsg").style.display = "block"; return; }
+    const fila = { ticker: t, precio_compra: +$("sPrecio").value || null, nota: $("sNota").value.trim() || null };
+    const { error } = s
+      ? await sb.from("seguimiento").update(fila).eq("ticker", t)
+      : await sb.from("seguimiento").insert(fila);
+    if (error) { $("sMsg").textContent = error.code === "23505" ? "Ya seguís esa acción." : "No se pudo guardar: " + error.message; $("sMsg").style.display = "block"; return; }
+    cerrarModal(); renderMiCartera();
+  };
+}
+
+// Botón "👀 Seguir" desde el Ranking
+async function seguirDesdeRanking(ticker) {
+  irA("cartera");
+  if (!sesion) return;   // primero tiene que ingresar
+  await leerPerfil();
+  if (!perfil?.aprobado) return;
+  if (!seguidas.length && !ops.length) await renderMiCartera();
+  formSeguimiento(ticker);
 }
 
 function tarjetaPos(p) {
@@ -609,6 +671,8 @@ function estadoPos(p) {
 
 function conectarBotones() {
   $("btnCompra").onclick = () => formOperacion("compra");
+  $("btnSeguir").onclick = () => formSeguimiento();
+  $("carteraBox").querySelectorAll("[data-seg]").forEach((b) => b.onclick = () => formSeguimiento(b.dataset.seg));
   $("btnVenta").onclick = () => formOperacion("venta");
   $("carteraBox").querySelectorAll("[data-obj]").forEach((b) => b.onclick = () => formObjetivos(b.dataset.obj));
   $("carteraBox").querySelectorAll("[data-movs]").forEach((b) => b.onclick = () => verMovimientos(b.dataset.movs));
@@ -869,6 +933,7 @@ function tarjeta(d) {
       <h3>Fundamental · ${d["Nota fund"]}</h3>${criterios(FUND, d._notas)}
       <h3>Técnico · ${d["Nota tec"]}</h3>${criterios(TEC, d._notas)}
       <div class="links">
+        <button class="news-btn" data-seguir="${esc(d.Ticker)}">👀 Seguir</button>
         <a href="https://finance.yahoo.com/quote/${encodeURIComponent(d.Ticker)}" target="_blank" rel="noopener">Yahoo Finance</a>
         <a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(d.Ticker.replace("-", "."))}" target="_blank" rel="noopener">Ver gráfico</a>
       </div>
@@ -889,6 +954,8 @@ function chips() {
 
 $("list").addEventListener("click", (e) => {
   if (e.target.closest("a")) return;
+  const sg = e.target.closest("[data-seguir]");
+  if (sg) { seguirDesdeRanking(sg.dataset.seguir); return; }
   const tab = e.target.closest(".ctabs button");
   if (tab) {
     const c = tab.closest(".card");
