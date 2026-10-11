@@ -1,0 +1,9 @@
+{
+  "name": "Radar de Acciones",
+  "short_name": "Radar",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0e1116",
+  "theme_color": "#0e1116",
+  "icons": [{ "src": "icon.png", "sizes": "512x512", "type": "image/png" }]
+}
