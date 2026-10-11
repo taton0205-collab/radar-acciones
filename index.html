@@ -174,6 +174,31 @@
   .arow { display: flex; justify-content: space-between; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 11px 14px; margin-bottom: 6px; font-size: 14px; }
   .arow small { display: block; color: var(--muted); font-size: 12px; }
   .btn { display: block; text-align: center; padding: 11px; border-radius: 10px; background: var(--chip); color: var(--text); text-decoration: none; font-weight: 600; font-size: 14px; margin-top: 12px; }
+  .modal { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.55); display: none; align-items: flex-end; justify-content: center; }
+  .modal.on { display: flex; }
+  .modal .hoja { background: var(--card); width: 100%; max-width: 520px; max-height: 92vh; overflow-y: auto; border-radius: 18px 18px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
+  .modal h2 { margin: 0 0 12px; font-size: 19px; }
+  .campo { margin-bottom: 10px; }
+  .campo label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .campo input { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+  .campo small { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .fila2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .acciones { display: flex; gap: 8px; margin-top: 14px; }
+  .acciones button { flex: 1; border: 0; padding: 12px; border-radius: 10px; font: inherit; font-weight: 700; cursor: pointer; background: var(--chip); color: var(--text); }
+  .acciones .pri { background: var(--accent); color: #fff; }
+  .botones { display: flex; gap: 8px; margin: 4px 0 10px; }
+  .botones button { flex: 1; border: 0; padding: 12px; border-radius: 12px; font: inherit; font-weight: 700; cursor: pointer; }
+  .b-compra { background: var(--accent); color: #fff; }
+  .b-venta { background: var(--chip); color: var(--text); }
+  .mini-acc { display: flex; gap: 6px; margin-top: 10px; }
+  .mini-acc button { flex: 1; border: 0; background: var(--chip); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; padding: 8px; border-radius: 9px; cursor: pointer; }
+  .mov { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .mov:last-child { border-bottom: 0; }
+  .mov small { display: block; color: var(--muted); font-size: 12px; }
+  .mov button { border: 0; background: none; font-size: 17px; cursor: pointer; padding: 4px 8px; }
+  .split { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+  .split b { font-variant-numeric: tabular-nums; }
+  .sug { font-size: 11px; color: var(--muted); font-weight: 400; }
   footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; }
   @media (max-width: 420px) {
     .grid { grid-template-columns: repeat(2, 1fr); }
@@ -215,6 +240,8 @@
   <footer>Herramienta para filtrar candidatas, no es una recomendación de compra.<br>Datos de Yahoo Finance.</footer>
 </div>
 
+<div class="modal" id="modal"><div class="hoja" id="hoja"></div></div>
+
 <nav class="tabbar">
   <button id="tRanking" class="on">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
@@ -226,7 +253,7 @@
   </button>
   <button id="tCartera">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h15V9H5a2 2 0 0 1-2-2z"/><circle cx="16" cy="14.5" r="1.3" fill="currentColor"/></svg>
-    Mi cuenta
+    Cartera
   </button>
 </nav>
 
@@ -389,15 +416,16 @@ async function renderCuenta() {
     return;
   }
 
-  // 3) Aprobado
-  let html = cabecera + `<div class="pcard">
-      <div class="lbl" style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Tu nombre</div>
+  // 3) Aprobado: cartera + ajustes
+  let html = cabecera + `<div id="carteraBox"><div class="msg">Cargando tu cartera…</div></div>
+    <h3>Ajustes</h3>
+    <div class="pcard">
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Tu nombre</div>
       <div style="display:flex;gap:8px;margin-top:6px">
         <input id="nombreInp" value="${esc(perfil.nombre || "")}" placeholder="Cómo te llamás" maxlength="40" style="flex:1;min-width:0;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit">
         <button class="chip" id="nombreBtn">Guardar</button>
       </div>
-    </div>
-    <div class="msg">💼 Tu cartera llega en la próxima etapa.</div>`;
+    </div>`;
 
   // 4) Panel de admin
   if (perfil.es_admin) html += `<h3>Usuarios</h3><div id="usuarios"><div class="msg">Cargando…</div></div>`;
@@ -407,7 +435,266 @@ async function renderCuenta() {
     await sb.rpc("cambiar_nombre", { nuevo: $("nombreInp").value });
     renderCuenta();
   };
+  renderMiCartera();
   if (perfil.es_admin) renderUsuarios();
+}
+
+// ================= MI CARTERA =================
+const SUG_VENTA = 25, SUG_STOP = 10;   // % sugeridos sobre el PPC
+let precios = null, ops = [], objs = {}, posiciones = [];
+
+const ars = (v, dec) => v == null ? "–" : "$ " + Number(v).toLocaleString("es-AR", { minimumFractionDigits: dec ?? (Math.abs(v) >= 1000 ? 0 : 2), maximumFractionDigits: dec ?? (Math.abs(v) >= 1000 ? 0 : 2) });
+const pctTxt = (v) => v == null ? "–" : (v >= 0 ? "+" : "") + num(v) + "%";
+const clsSigno = (v) => v == null ? "" : v >= 0 ? "up" : "down";
+const hoyISO = () => new Date(Date.now() - 3 * 36e5).toISOString().slice(0, 10);
+
+async function cargarPrecios() {
+  try { const r = await fetch("precios.json?v=" + Date.now()); precios = r.ok ? await r.json() : null; }
+  catch { precios = null; }
+}
+
+// Valor de una serie {fecha: valor} en una fecha (o el último día hábil anterior)
+function valorEn(serie, fecha) {
+  if (!serie) return null;
+  if (serie[fecha] != null) return serie[fecha];
+  let mejor = null;
+  for (const f in serie) if (f <= fecha && (!mejor || f > mejor)) mejor = f;
+  return mejor ? serie[mejor] : null;
+}
+
+function calcularPosiciones() {
+  const pos = {};
+  const orden = [...ops].sort((a, b) => a.fecha === b.fecha ? a.id - b.id : a.fecha < b.fecha ? -1 : 1);
+  for (const o of orden) {
+    const p = pos[o.ticker] ||= { ticker: o.ticker, cant: 0, costo: 0, realizado: 0, compras: [], movs: [] };
+    const cant = +o.cantidad, precio = +o.precio, com = +o.comision;
+    p.movs.push(o);
+    if (o.tipo === "compra") { p.cant += cant; p.costo += cant * precio + com; p.compras.push(o); }
+    else {
+      const ppc = p.cant ? p.costo / p.cant : 0, q = Math.min(cant, p.cant);
+      p.realizado += q * precio - com - q * ppc;
+      p.costo -= q * ppc; p.cant -= q;
+    }
+  }
+  return Object.values(pos).map((p) => {
+    const pr = precios?.tickers?.[p.ticker] || {};
+    p.ppc = p.cant > 0 ? p.costo / p.cant : null;
+    p.precio = pr.ars ?? null;
+    p.varDia = pr.ars && pr.ars_prev ? (pr.ars / pr.ars_prev - 1) * 100 : null;
+    p.valor = p.precio != null ? p.precio * p.cant : null;
+    p.gan = p.valor != null ? p.valor - p.costo : null;
+    p.ganPct = p.gan != null && p.costo ? p.gan / p.costo * 100 : null;
+    // Cuánto vino de la acción y cuánto del dólar CCL (promedio ponderado de las compras)
+    let peso = 0, usdC = 0, cclC = 0;
+    for (const c of p.compras) {
+      const u = valorEn(pr.usd_hist, c.fecha), k = valorEn(precios?.ccl_hist, c.fecha);
+      if (u == null || k == null) { peso = 0; break; }
+      const w = c.cantidad * c.precio; peso += w; usdC += u * w; cclC += k * w;
+    }
+    if (peso && pr.usd && precios?.ccl && p.cant > 0) {
+      p.efAccion = (pr.usd / (usdC / peso) - 1) * 100;
+      p.efDolar = (precios.ccl / (cclC / peso) - 1) * 100;
+    }
+    const ob = objs[p.ticker] || {};
+    p.sugerido = !ob.vender_en && !ob.stop;
+    p.objetivo = ob.vender_en ? +ob.vender_en : p.ppc ? p.ppc * (1 + SUG_VENTA / 100) : null;
+    p.stop = ob.stop ? +ob.stop : p.ppc ? p.ppc * (1 - SUG_STOP / 100) : null;
+    p.situacion = "normal";
+    if (p.precio != null) {
+      if (p.objetivo && p.precio >= p.objetivo) p.situacion = "objetivo";
+      else if (p.objetivo && p.precio >= p.objetivo * 0.97) p.situacion = "cerca_objetivo";
+      if (p.stop && p.precio <= p.stop) p.situacion = "stop";
+      else if (p.stop && p.precio <= p.stop * 1.03 && p.situacion === "normal") p.situacion = "cerca_stop";
+    }
+    p.nota = datos.find((a) => a.Ticker === p.ticker)?.Puntaje ?? null;
+    return p;
+  }).sort((a, b) => (b.valor ?? 0) - (a.valor ?? 0));
+}
+
+async function renderMiCartera() {
+  const box = $("carteraBox");
+  const [r1, r2] = await Promise.all([
+    sb.from("operaciones").select("*").order("fecha"),
+    sb.from("objetivos").select("*"),
+    cargarPrecios(),
+  ]);
+  if (r1.error) { box.innerHTML = `<div class="msg">Error: ${esc(r1.error.message)}</div>`; return; }
+  ops = r1.data || [];
+  objs = Object.fromEntries((r2.data || []).map((o) => [o.ticker, o]));
+  posiciones = calcularPosiciones();
+
+  const abiertas = posiciones.filter((p) => p.cant > 0);
+  const cerradas = posiciones.filter((p) => p.cant <= 0);
+  const conPrecio = abiertas.filter((p) => p.valor != null);
+  const invertido = conPrecio.reduce((s, p) => s + p.costo, 0);
+  const valor = conPrecio.reduce((s, p) => s + p.valor, 0);
+  const noReal = valor - invertido;
+  const realizado = posiciones.reduce((s, p) => s + p.realizado, 0);
+
+  let html = `<div class="botones">
+      <button class="b-compra" id="btnCompra">+ Compra</button>
+      <button class="b-venta" id="btnVenta">− Venta</button>
+    </div>`;
+
+  if (!ops.length) {
+    box.innerHTML = html + `<div class="msg">Todavía no cargaste operaciones.<br>Tocá <b>+ Compra</b> para cargar tu primer CEDEAR.</div>`;
+    conectarBotones(); return;
+  }
+
+  html += `<div class="resumen">
+      <div class="kv"><b>${ars(valor)}</b><span>Valor actual</span></div>
+      <div class="kv"><b class="${clsSigno(noReal)}">${noReal >= 0 ? "+" : "−"}${ars(Math.abs(noReal))}</b><span>Ganancia (${pctTxt(invertido ? noReal / invertido * 100 : 0)})</span></div>
+      <div class="kv"><b>${ars(invertido)}</b><span>Invertido</span></div>
+      <div class="kv"><b class="${clsSigno(realizado)}">${realizado >= 0 ? "+" : "−"}${ars(Math.abs(realizado))}</b><span>Ganancia ya realizada</span></div>
+    </div>`;
+  if (precios?.ccl) html += `<div class="sub" style="margin:-4px 0 10px">Dólar CCL: <b>${ars(precios.ccl, 2)}</b> · precios ${esc(precios.actualizado || "")}</div>`;
+
+  html += abiertas.map(tarjetaPos).join("");
+  if (cerradas.length) html += `<h3>Vendidas</h3>` + cerradas.map((p) => `<div class="arow"><span><b>${esc(p.ticker)}</b><small>Resultado: <span class="${clsSigno(p.realizado)}">${p.realizado >= 0 ? "+" : "−"}${ars(Math.abs(p.realizado))}</span></small></span><button class="chip" data-movs="${esc(p.ticker)}">Ver</button></div>`).join("");
+  box.innerHTML = html;
+  conectarBotones();
+}
+
+function tarjetaPos(p) {
+  const sinPrecio = p.precio == null;
+  const split = p.efAccion != null ? `<div class="split">Por la acción <b class="${clsSigno(p.efAccion)}">${pctTxt(p.efAccion)}</b> · por el dólar CCL <b class="${clsSigno(p.efDolar)}">${pctTxt(p.efDolar)}</b></div>` : "";
+  return `<div class="pcard">
+    <div class="ph">
+      <div><div class="tk">${esc(p.ticker)}</div><div class="name">${num(p.cant)} CEDEARs · PPC ${ars(p.ppc)}</div></div>
+      <div class="pr">${sinPrecio ? `<b>–</b><span>sin precio aún</span>` : `<b>${ars(p.precio)}</b>${p.varDia != null ? `<span class="${clsSigno(p.varDia)}">${pctTxt(p.varDia)} hoy</span>` : ""}`}</div>
+    </div>
+    ${sinPrecio ? `<div class="estado">⏳ El precio se actualiza cada 30 min con la bolsa abierta.</div>` : `
+    <div class="gan">
+      <span>Ganancia <b class="${clsSigno(p.ganPct)}">${pctTxt(p.ganPct)}</b></span>
+      <span>En pesos <b class="${clsSigno(p.gan)}">${p.gan >= 0 ? "+" : "−"}${ars(Math.abs(p.gan))}</b></span>
+      ${p.nota != null ? `<span>Nota radar <b>${Math.round(p.nota)}</b></span>` : ""}
+    </div>
+    ${split}
+    ${barraPos(p)}
+    ${estadoPos(p)}`}
+    <div class="mini-acc">
+      <button data-obj="${esc(p.ticker)}">🎯 Objetivos</button>
+      <button data-movs="${esc(p.ticker)}">📋 Movimientos</button>
+    </div>
+  </div>`;
+}
+
+function barraPos(p) {
+  const vals = [p.precio, p.ppc, p.objetivo, p.stop].filter((v) => v != null);
+  const min = Math.min(...vals) * 0.98, max = Math.max(...vals) * 1.02;
+  const pos = (v) => ((v - min) / (max - min || 1) * 100);
+  const pp = pos(p.precio);
+  return `<div class="rango">
+      <div class="ppc" style="left:${pos(p.ppc).toFixed(1)}%"></div>
+      <div class="mk ${pp < 15 ? "izq" : pp > 85 ? "der" : ""}" style="left:${pp.toFixed(1)}%" data-l="Hoy ${ars(p.precio)}"></div>
+    </div>
+    <div class="rlbl">
+      <span>Stop${p.sugerido ? ' <span class="sug">(sug.)</span>' : ""}<br><b>${ars(p.stop)}</b></span>
+      <span class="c">PPC<br><b>${ars(p.ppc)}</b></span>
+      <span style="text-align:right">Vender${p.sugerido ? ' <span class="sug">(sug.)</span>' : ""}<br><b>${ars(p.objetivo)}</b></span>
+    </div>`;
+}
+
+function estadoPos(p) {
+  const falta = p.objetivo ? (p.objetivo / p.precio - 1) * 100 : null;
+  const aStop = p.stop ? (1 - p.stop / p.precio) * 100 : null;
+  switch (p.situacion) {
+    case "objetivo": return `<div class="estado ok">🎯 Llegó a tu precio de venta</div>`;
+    case "cerca_objetivo": return `<div class="estado ok">👀 Cerca del objetivo: falta ${num(falta)}%</div>`;
+    case "stop": return `<div class="estado bad">🛑 Tocó tu stop</div>`;
+    case "cerca_stop": return `<div class="estado warn">⚠️ Cerca del stop: está a ${num(aStop)}%</div>`;
+  }
+  return `<div class="estado">Faltan ${num(falta)}% para vender · stop a ${num(aStop)}%</div>`;
+}
+
+function conectarBotones() {
+  $("btnCompra").onclick = () => formOperacion("compra");
+  $("btnVenta").onclick = () => formOperacion("venta");
+  $("carteraBox").querySelectorAll("[data-obj]").forEach((b) => b.onclick = () => formObjetivos(b.dataset.obj));
+  $("carteraBox").querySelectorAll("[data-movs]").forEach((b) => b.onclick = () => verMovimientos(b.dataset.movs));
+}
+
+// ---------- Ventanas (modales) ----------
+function abrirModal(html) { $("hoja").innerHTML = html; $("modal").classList.add("on"); }
+function cerrarModal() { $("modal").classList.remove("on"); }
+$("modal").addEventListener("click", (e) => { if (e.target.id === "modal") cerrarModal(); });
+
+function formOperacion(tipo, ticker = "") {
+  const tickers = posiciones.filter((p) => p.cant > 0).map((p) => p.ticker);
+  abrirModal(`<h2>${tipo === "compra" ? "Cargar compra" : "Cargar venta"}</h2>
+    <div class="campo"><label>Ticker (ej: WDC, AAPL, KO)</label>
+      <input id="fTicker" value="${esc(ticker || (tipo === "venta" && tickers.length === 1 ? tickers[0] : ""))}" list="misTickers" autocapitalize="characters" placeholder="WDC">
+      <datalist id="misTickers">${tickers.map((t) => `<option value="${esc(t)}">`).join("")}</datalist></div>
+    <div class="fila2">
+      <div class="campo"><label>Fecha</label><input id="fFecha" type="date" value="${hoyISO()}" max="${hoyISO()}"></div>
+      <div class="campo"><label>Cantidad de CEDEARs</label><input id="fCant" type="number" inputmode="decimal" min="0" step="any" placeholder="10"></div>
+    </div>
+    <div class="fila2">
+      <div class="campo"><label>Precio por CEDEAR ($)</label><input id="fPrecio" type="number" inputmode="decimal" min="0" step="any" placeholder="18500"></div>
+      <div class="campo"><label>Comisión total ($)</label><input id="fCom" type="number" inputmode="decimal" min="0" step="any" value="0"></div>
+    </div>
+    <div class="campo"><small id="fTotal">Total: –</small></div>
+    <div id="fMsg" class="estado" style="display:none"></div>
+    <div class="acciones"><button id="fCancelar">Cancelar</button><button class="pri" id="fGuardar">Guardar</button></div>`);
+  const total = () => {
+    const c = +$("fCant").value || 0, pr = +$("fPrecio").value || 0, co = +$("fCom").value || 0;
+    $("fTotal").textContent = "Total: " + ars(tipo === "compra" ? c * pr + co : c * pr - co, 2) + (tipo === "venta" ? " (lo que recibís)" : "");
+  };
+  ["fCant", "fPrecio", "fCom"].forEach((id) => $(id).oninput = total);
+  $("fCancelar").onclick = cerrarModal;
+  $("fGuardar").onclick = async () => {
+    const fila = { ticker: $("fTicker").value.trim().toUpperCase(), tipo, fecha: $("fFecha").value,
+      cantidad: +$("fCant").value, precio: +$("fPrecio").value, comision: +$("fCom").value || 0 };
+    const err = (t) => { $("fMsg").textContent = t; $("fMsg").className = "estado bad"; $("fMsg").style.display = "block"; };
+    if (!/^[A-Z0-9.\-]{1,10}$/.test(fila.ticker)) return err("Escribí un ticker válido (ej: WDC).");
+    if (!(fila.cantidad > 0)) return err("La cantidad tiene que ser mayor a 0.");
+    if (!(fila.precio > 0)) return err("El precio tiene que ser mayor a 0.");
+    if (tipo === "venta") {
+      const p = posiciones.find((x) => x.ticker === fila.ticker);
+      if (!p || p.cant < fila.cantidad - 1e-9) return err(`No tenés ${num(fila.cantidad)} de ${fila.ticker} para vender${p ? ` (tenés ${num(p.cant)})` : ""}.`);
+    }
+    $("fGuardar").disabled = true;
+    const { error } = await sb.from("operaciones").insert(fila);
+    if (error) { $("fGuardar").disabled = false; return err("No se pudo guardar: " + error.message); }
+    cerrarModal(); renderMiCartera();
+  };
+}
+
+function formObjetivos(ticker) {
+  const p = posiciones.find((x) => x.ticker === ticker);
+  const ob = objs[ticker] || {};
+  const pctDe = (v) => v && p.ppc ? pctTxt((v / p.ppc - 1) * 100) + " vs PPC" : "";
+  abrirModal(`<h2>Objetivos · ${esc(ticker)}</h2>
+    <div class="sub" style="margin-bottom:12px">PPC ${ars(p.ppc)} · hoy ${ars(p.precio)}</div>
+    <div class="campo"><label>Vender cuando llegue a ($)</label><input id="oVenta" type="number" inputmode="decimal" step="any" value="${ob.vender_en ? +ob.vender_en : Math.round(p.objetivo)}"><small id="oVentaPct">${pctDe(ob.vender_en || p.objetivo)}</small></div>
+    <div class="campo"><label>Stop: avisarme si baja de ($)</label><input id="oStop" type="number" inputmode="decimal" step="any" value="${ob.stop ? +ob.stop : Math.round(p.stop)}"><small id="oStopPct">${pctDe(ob.stop || p.stop)}</small></div>
+    <div class="campo"><small>Sugeridos: vender a +${SUG_VENTA}% y stop a −${SUG_STOP}% de tu PPC.</small></div>
+    <div class="acciones"><button id="oSug">Usar sugeridos</button><button class="pri" id="oGuardar">Guardar</button></div>`);
+  $("oVenta").oninput = () => $("oVentaPct").textContent = pctDe(+$("oVenta").value);
+  $("oStop").oninput = () => $("oStopPct").textContent = pctDe(+$("oStop").value);
+  $("oSug").onclick = async () => { await sb.from("objetivos").delete().eq("ticker", ticker); cerrarModal(); renderMiCartera(); };
+  $("oGuardar").onclick = async () => {
+    await sb.from("objetivos").upsert({ ticker, vender_en: +$("oVenta").value || null, stop: +$("oStop").value || null });
+    cerrarModal(); renderMiCartera();
+  };
+}
+
+function verMovimientos(ticker) {
+  const p = posiciones.find((x) => x.ticker === ticker);
+  const movs = [...p.movs].reverse();
+  abrirModal(`<h2>Movimientos · ${esc(ticker)}</h2>
+    ${movs.map((o) => `<div class="mov"><span><b class="${o.tipo === "compra" ? "up" : "down"}">${o.tipo === "compra" ? "Compra" : "Venta"}</b> · ${num(+o.cantidad)} a ${ars(+o.precio)}
+        <small>${o.fecha.split("-").reverse().join("/")}${+o.comision ? ` · comisión ${ars(+o.comision)}` : ""}</small></span>
+        <button data-del="${o.id}" title="Borrar">🗑️</button></div>`).join("")}
+    <div class="acciones"><button id="mCerrar">Cerrar</button><button class="pri" id="mCompra">+ Otra compra</button></div>`);
+  $("mCerrar").onclick = cerrarModal;
+  $("mCompra").onclick = () => formOperacion("compra", ticker);
+  $("hoja").querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
+    if (!confirm("¿Borrar este movimiento?")) return;
+    await sb.from("operaciones").delete().eq("id", +b.dataset.del);
+    await renderMiCartera();
+    if (posiciones.find((x) => x.ticker === ticker)) verMovimientos(ticker); else cerrarModal();
+  });
 }
 
 async function renderUsuarios() {
