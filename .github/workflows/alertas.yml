@@ -1,0 +1,25 @@
+name: Avisos Telegram
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  avisos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar librerías
+        run: pip install requests
+      - name: Avisos
+        env:
+          SUPABASE_URL: https://iyejwbchituodjjeailw.supabase.co
+          SUPABASE_SECRET: ${{ secrets.SUPABASE_SECRET }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          APP_URL: https://taton0205-collab.github.io/radar-acciones/
+        run: python alertas.py
