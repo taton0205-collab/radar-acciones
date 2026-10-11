@@ -1,0 +1,38 @@
+name: Precios CEDEARs
+
+on:
+  schedule:
+    - cron: "*/30 13-20 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: guardar-cambios
+  cancel-in-progress: false
+
+jobs:
+  precios:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar librerías
+        run: pip install yfinance pandas requests
+      - name: Bajar precios
+        env:
+          SUPABASE_URL: https://iyejwbchituodjjeailw.supabase.co
+          SUPABASE_SECRET: ${{ secrets.SUPABASE_SECRET }}
+        run: python precios.py
+      - name: Guardar
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add precios.json
+          git commit -m "Precios actualizados" || echo "Sin cambios"
+          git pull --rebase
+          git push
