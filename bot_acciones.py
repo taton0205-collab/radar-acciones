@@ -57,6 +57,13 @@ CREC_GANANCIAS_MIN = 0.0   # Crecimiento de ganancias mínimo (> 0%)
 RSI_MIN, RSI_MAX = 40, 65  # Zona de RSI buscada
 VOL_RATIO_MIN = 1.0        # Volumen últimos 20 días / últimos 60 días
 
+# --- Comparación contra el sector ---
+PESO_SECTOR = 0.5          # Cuánto pesa la comparación con su sector (0 = nada, 1 = solo sector)
+MIN_EMPRESAS_SECTOR = 4    # Mínimo de empresas en el sector para poder comparar
+
+# --- Historial ---
+DIAS_HISTORIAL = 60        # Cuántas actualizaciones se guardan
+
 # --- Peso de cada análisis en el puntaje final (tienen que sumar 1) ---
 PESO_FUNDAMENTAL = 0.5
 PESO_TECNICO = 0.5
@@ -177,7 +184,49 @@ def analisis_fundamental(info):
         "Crec. ganancias": escala(crec_gan, 0.0, 0.25),
         "FCF positivo": escala(margen_fcf, 0.0, 0.20),
     }
-    return datos, criterios, notas
+    crudos = {"pe": pe, "roe": roe, "deuda": deuda, "ci": crec_ing, "cg": crec_gan, "fcf": margen_fcf}
+    return datos, criterios, notas, crudos
+
+
+def notas_vs_sector(c, med):
+    """Notas (0 a 1) comparando la empresa contra la mediana de su sector."""
+    def dif(clave, rango):
+        if c[clave] is None or med.get(clave) is None:
+            return None
+        return escala(c[clave] - med[clave], -rango, rango)
+
+    def ratio(clave, malo, bueno):
+        if c[clave] is None or not med.get(clave):
+            return None
+        if clave == "pe" and c[clave] <= 0:
+            return 0.0
+        return escala(c[clave] / med[clave], malo, bueno)
+
+    return {
+        "P/E": ratio("pe", 1.6, 0.7),            # más barata que su sector = mejor
+        "ROE": dif("roe", 0.10),
+        "Deuda/Pat": ratio("deuda", 2.0, 0.5),   # menos deuda que su sector = mejor
+        "Crec. ingresos": dif("ci", 0.08),
+        "Crec. ganancias": dif("cg", 0.15),
+        "FCF positivo": dif("fcf", 0.08),
+    }
+
+
+def medianas_por_sector(filas):
+    """Mediana de cada dato fundamental por sector."""
+    sectores = {}
+    for f in filas:
+        sectores.setdefault(f["Sector"], []).append(f["_crudos"])
+    medianas = {}
+    for sector, lista in sectores.items():
+        if len(lista) < MIN_EMPRESAS_SECTOR or not sector:
+            continue
+        med = {}
+        for clave in ["pe", "roe", "deuda", "ci", "cg", "fcf"]:
+            valores = [c[clave] for c in lista if c[clave] is not None and not (clave == "pe" and c[clave] <= 0)]
+            med[clave] = float(pd.Series(valores).median()) if len(valores) >= 3 else None
+        medianas[sector] = med
+    return medianas
 
 
 def obtener_sp500():
@@ -212,10 +261,37 @@ def obtener_noticias(ticker):
     return noticias
 
 
+def leer_historial():
+    """Lee el historial guardado en la corrida anterior (dentro del data.json viejo)."""
+    try:
+        with open(ARCHIVO_WEB, encoding="utf-8") as f:
+            return json.load(f).get("historial", {})
+    except Exception:
+        return {}
+
+
 def guardar_web(ranking):
     """Guarda el ranking en JSON para la página web."""
     hora_arg = datetime.now(timezone.utc) - timedelta(hours=3)
     filas = json.loads(ranking.to_json(orient="records"))  # NaN -> null
+
+    # Historial: {"2026-10-11": {"AAPL": 81.2, ...}, ...}
+    historial = leer_historial()
+    hoy = hora_arg.strftime("%Y-%m-%d")
+    fechas_previas = sorted(f for f in historial if f != hoy)
+    anterior = historial[fechas_previas[-1]] if fechas_previas else {}
+    puestos_ant = {t: i + 1 for i, (t, _) in enumerate(sorted(anterior.items(), key=lambda x: -x[1]))}
+    historial[hoy] = {f["Ticker"]: f["Puntaje"] for f in filas}
+    fechas = sorted(historial)[-DIAS_HISTORIAL:]
+    historial = {f: historial[f] for f in fechas}
+
+    for puesto, fila in enumerate(filas, 1):
+        t = fila["Ticker"]
+        fila["Historial"] = [[f, historial[f][t]] for f in fechas if t in historial[f]][-30:]
+        fila["Cambio"] = round(fila["Puntaje"] - anterior[t], 1) if t in anterior else None
+        fila["Puesto anterior"] = puestos_ant.get(t)
+        fila["Nueva"] = bool(anterior) and t not in anterior
+
     print(f"Bajando noticias de las primeras {NOTICIAS_TOP}...")
     for fila in filas[:NOTICIAS_TOP]:
         fila["Noticias"] = obtener_noticias(fila["Ticker"])
@@ -224,6 +300,7 @@ def guardar_web(ranking):
         "actualizado": hora_arg.strftime("%d/%m/%Y %H:%M"),
         "max_por_sector": MAX_POR_SECTOR,
         "acciones": filas,
+        "historial": historial,
     }
     if os.path.dirname(ARCHIVO_WEB):
         os.makedirs(os.path.dirname(ARCHIVO_WEB), exist_ok=True)
@@ -264,31 +341,24 @@ def main():
                 continue  # gráfico flojo: no vale la pena pedir fundamentales
 
             info = yf.Ticker(ticker).info
-            datos_fund, crit_fund, notas_fund = analisis_fundamental(info)
+            datos_fund, crit_fund, notas_fund, crudos = analisis_fundamental(info)
         except Exception as e:
             print(f"\n  {ticker}: no se pudo analizar ({e})")
             continue
 
-        ok_fund = sum(crit_fund.values())
-        ok_tec = sum(crit_tec.values())
-        nota_fund = sum(notas_fund.values()) / len(notas_fund) * 100
-        nota_tec = sum(notas_tec.values()) / len(notas_tec) * 100
-        puntaje = nota_fund * PESO_FUNDAMENTAL + nota_tec * PESO_TECNICO
         falla = [c for c, ok in {**crit_fund, **crit_tec}.items() if not ok]
-
         filas.append({
             "Ticker": ticker,
             "Empresa": info.get("shortName", ""),
             "Sector": info.get("sector", ""),
-            "Puntaje": round(puntaje, 1),
-            "Nota fund": round(nota_fund),
-            "Nota tec": round(nota_tec),
-            "Fund": f"{ok_fund}/{len(crit_fund)}",
-            "Tec": f"{ok_tec}/{len(crit_tec)}",
+            "Fund": f"{sum(crit_fund.values())}/{len(crit_fund)}",
+            "Tec": f"{sum(crit_tec.values())}/{len(crit_tec)}",
             **datos_tec,
             **datos_fund,
             "No cumple": ", ".join(falla) if falla else "-",
-            "_notas": {k: round(v * 100) for k, v in {**notas_fund, **notas_tec}.items()},
+            "_notas_abs": notas_fund,
+            "_notas_tec": notas_tec,
+            "_crudos": crudos,
         })
         time.sleep(0.2)  # para no saturar a Yahoo
 
@@ -296,6 +366,32 @@ def main():
     if not filas:
         print("No se pudo analizar ninguna acción. Revisá tu conexión.")
         return
+
+    # Notas finales: mezcla de valor absoluto + comparación con su sector
+    medianas = medianas_por_sector(filas)
+    for f in filas:
+        med = medianas.get(f["Sector"])
+        notas_fund = dict(f["_notas_abs"])
+        if med:
+            for k, rel in notas_vs_sector(f["_crudos"], med).items():
+                if rel is not None:
+                    notas_fund[k] = notas_fund[k] * (1 - PESO_SECTOR) + rel * PESO_SECTOR
+        notas_tec = f["_notas_tec"]
+        nota_fund = sum(notas_fund.values()) / len(notas_fund) * 100
+        nota_tec = sum(notas_tec.values()) / len(notas_tec) * 100
+        f["Puntaje"] = round(nota_fund * PESO_FUNDAMENTAL + nota_tec * PESO_TECNICO, 1)
+        f["Nota fund"] = round(nota_fund)
+        f["Nota tec"] = round(nota_tec)
+        f["_notas"] = {k: round(v * 100) for k, v in {**notas_fund, **notas_tec}.items()}
+        pct = lambda v: round(v * 100, 1) if v is not None else None
+        f["_sector"] = None if not med else {
+            "P/E": round(med["pe"], 1) if med["pe"] else None, "ROE": pct(med["roe"]),
+            "Deuda/Pat": round(med["deuda"]) if med["deuda"] else None,
+            "Crec. ingresos": pct(med["ci"]), "Crec. ganancias": pct(med["cg"]),
+            "FCF positivo": pct(med["fcf"]),
+        }
+        for k in ("_notas_abs", "_notas_tec", "_crudos"):
+            del f[k]
 
     ranking = (
         pd.DataFrame(filas)
@@ -305,7 +401,7 @@ def main():
     ranking.index += 1
     ranking = ranking.round(1)
     guardar_web(ranking)
-    ranking = ranking.drop(columns="_notas")
+    ranking = ranking.drop(columns=["_notas", "_sector"])
 
     # Top con límite por sector, para diversificar
     if MAX_POR_SECTOR > 0:
