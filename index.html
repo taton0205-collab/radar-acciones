@@ -347,6 +347,7 @@ function irA(vista) {
 
 // ---------------- Cuenta (Supabase) ----------------
 const SUPABASE_URL = "https://iyejwbchituodjjeailw.supabase.co";
+const BOT_TELEGRAM = "radar_acciones_thiago_bot";
 const SUPABASE_KEY = "sb_publishable_nxdbOSIfsXbw7ztNvWjQtQ_rGQCiGfU";
 const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 let sesion = null, perfil = null, mailPendiente = "";
@@ -426,6 +427,15 @@ async function renderCuenta() {
         <input id="nombreInp" value="${esc(perfil.nombre || "")}" placeholder="Cómo te llamás" maxlength="40" style="flex:1;min-width:0;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit">
         <button class="chip" id="nombreBtn">Guardar</button>
       </div>
+    </div>
+    <div class="pcard" id="tgBox">
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Avisos por Telegram</div>
+      ${perfil.telegram_chat_id
+        ? `<div class="estado ok" style="margin-top:8px">✅ Telegram vinculado. Te avisamos cuando tus acciones lleguen a tus precios y te mandamos un resumen diario.</div>
+           <button class="btn" id="tgOff" style="width:100%;border:0;cursor:pointer">Dejar de recibir avisos</button>`
+        : `<div class="sub" style="margin-top:6px">Recibí un mensaje cuando una acción llegue a tu precio de venta, toque el stop o baje a tu precio de compra.</div>
+           <a class="btn" id="tgOn" href="https://t.me/${BOT_TELEGRAM}?start=${encodeURIComponent(perfil.telegram_codigo || "")}" target="_blank" rel="noopener" style="background:#229ED9;color:#fff">📲 Vincular Telegram</a>
+           <div class="sub" id="tgAyuda" style="margin-top:8px;display:none">En Telegram tocá <b>Iniciar</b>. En unos minutos te llega un mensaje de confirmación y acá va a decir "vinculado" (puede tardar hasta 15 min).</div>`}
     </div>`;
 
   // 4) Panel de admin
@@ -435,6 +445,11 @@ async function renderCuenta() {
   $("nombreBtn").onclick = async () => {
     await sb.rpc("cambiar_nombre", { nuevo: $("nombreInp").value });
     renderCuenta();
+  };
+  if ($("tgOn")) $("tgOn").addEventListener("click", () => { $("tgAyuda").style.display = "block"; });
+  if ($("tgOff")) $("tgOff").onclick = async () => {
+    if (!confirm("¿Dejar de recibir avisos por Telegram?")) return;
+    await sb.rpc("desvincular_telegram"); renderCuenta();
   };
   renderMiCartera();
   if (perfil.es_admin) renderUsuarios();
