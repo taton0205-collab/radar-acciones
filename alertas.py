@@ -8,6 +8,9 @@ Corre cada 15 minutos en GitHub y hace 3 cosas:
        🎯 llegó a tu precio de venta      👀 está a menos de 3% de llegar
        🛑 tocó tu stop                    ⚠️ está a menos de 3% del stop
        🛒 una acción en seguimiento bajó a tu precio de compra
+       🚀/📉 una acción tuya se movió más que tu % elegido en el día
+       📅 una empresa tuya presenta balance en los próximos días
+     El stop puede ser fijo o dinámico (sube solo cuando la acción sube).
   3. Resumen diario (lunes a viernes, después de las 19:30): tu cartera + top 3 del radar.
 
 Cada aviso se manda UNA sola vez (queda anotado en Supabase). Si cambiás el precio
@@ -29,6 +32,9 @@ AVISO_CERCA = 3          # % para avisar "estás cerca"
 SUG_VENTA, SUG_STOP = 25, 10   # mismos sugeridos que la app
 HORA_RESUMEN = (19, 30)  # hora Argentina
 TOP_RESUMEN = 3
+DIAS_AVISO_BALANCE = 3   # avisar balances con esta anticipación
+MAX_NOTICIAS_RESUMEN = 5
+DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 
 
 # ----------------------------- utilidades -----------------------------
@@ -176,14 +182,44 @@ def calcular_posiciones(ops, objs, precios):
         p["prev"] = pr.get("ars_prev")
         ob = objs.get(p["ticker"], {})
         p["objetivo"] = float(ob["vender_en"]) if ob.get("vender_en") else p["ppc"] * (1 + SUG_VENTA / 100)
-        p["stop"] = float(ob["stop"]) if ob.get("stop") else p["ppc"] * (1 - SUG_STOP / 100)
+        p["dinamico"] = ob.get("stop_tipo") == "dinamico" and ob.get("stop_pct")
+        if p["dinamico"]:
+            # Stop dinámico: queda X% debajo del precio más alto alcanzado
+            maximo = max(float(ob.get("max_precio") or 0), p["ppc"], p["precio"] or 0)
+            p["max_nuevo"] = maximo if maximo > float(ob.get("max_precio") or 0) + 1e-9 else None
+            p["maximo"] = maximo
+            p["stop"] = maximo * (1 - float(ob["stop_pct"]) / 100)
+            p["stop_clave"] = f"din{float(ob['stop_pct']):g}@{maximo:.2f}"
+        else:
+            p["stop"] = float(ob["stop"]) if ob.get("stop") else p["ppc"] * (1 - SUG_STOP / 100)
+            p["stop_clave"] = f"{p['stop']:.2f}"
         salida.append(p)
     return salida
 
 
-def avisos_de_usuario(posiciones, seguidas, precios):
+def avisos_de_usuario(posiciones, seguidas, precios, pct_mov=0, hoy=""):
     """Lista de (clave, texto) con los avisos que corresponden ahora."""
     avisos = []
+
+    # Movimientos fuertes del día (cartera + seguimiento), uno por dirección por día
+    if pct_mov and pct_mov > 0:
+        vistos = set()
+        for t, origen in [(p["ticker"], "cartera") for p in posiciones] + [(s["ticker"], "seguimiento") for s in seguidas]:
+            if t in vistos:
+                continue
+            vistos.add(t)
+            pr = precios.get("tickers", {}).get(t, {})
+            precio, prev = pr.get("ars"), pr.get("ars_prev")
+            if not precio or not prev:
+                continue
+            var = (precio / prev - 1) * 100
+            if abs(var) >= pct_mov:
+                sube = var > 0
+                donde = "de tu cartera" if origen == "cartera" else "de tu seguimiento"
+                avisos.append((f"{t}|mov|{hoy}|{'sube' if sube else 'baja'}",
+                               f"{'🚀' if sube else '📉'} <b>{t} {'sube' if sube else 'cae'} {pct(var)} hoy</b> ({donde})\n"
+                               f"Precio: {pesos(precio)} · ayer cerró a {pesos(prev)}"))
+
     for p in posiciones:
         t, precio, ppc = p["ticker"], p["precio"], p["ppc"]
         if precio is None:
@@ -200,15 +236,31 @@ def avisos_de_usuario(posiciones, seguidas, precios):
                            f"👀 <b>{t} está cerca de tu precio de venta</b>\n"
                            f"Precio: {pesos(precio)} · objetivo {pesos(obj)} (falta {fmt((obj / precio - 1) * 100, 1)}%)\n"
                            f"Ganancia actual: {pct(gan)}"))
+        tipo_stop = "stop dinámico" if p.get("dinamico") else "stop"
         if precio <= stop:
-            avisos.append((f"{t}|stop|{stop:.2f}",
-                           f"🛑 <b>{t} tocó tu stop</b>\n"
+            avisos.append((f"{t}|stop|{p['stop_clave']}",
+                           f"🛑 <b>{t} tocó tu {tipo_stop}</b>\n"
                            f"Precio: {pesos(precio)} (stop {pesos(stop)})\n"
                            f"Tu PPC: {pesos(ppc)} → resultado <b>{pct(gan)}</b>"))
         elif precio <= stop * (1 + AVISO_CERCA / 100):
-            avisos.append((f"{t}|cerca_stop|{stop:.2f}",
-                           f"⚠️ <b>{t} está cerca de tu stop</b>\n"
+            avisos.append((f"{t}|cerca_stop|{p['stop_clave']}",
+                           f"⚠️ <b>{t} está cerca de tu {tipo_stop}</b>\n"
                            f"Precio: {pesos(precio)} · stop {pesos(stop)}\nResultado actual: {pct(gan)}"))
+    # Balances: aviso unos días antes (cartera + seguimiento)
+    if hoy:
+        hoy_d = datetime.strptime(hoy, "%Y-%m-%d").date()
+        for t in sorted({p["ticker"] for p in posiciones} | {s["ticker"] for s in seguidas}):
+            fecha = precios.get("tickers", {}).get(t, {}).get("balance")
+            if not fecha:
+                continue
+            f = datetime.strptime(fecha, "%Y-%m-%d").date()
+            dias = (f - hoy_d).days
+            if 0 <= dias <= DIAS_AVISO_BALANCE:
+                cuando = "hoy" if dias == 0 else "mañana" if dias == 1 else f"en {dias} días"
+                avisos.append((f"{t}|balance|{fecha}",
+                               f"📅 <b>{t} presenta resultados {cuando}</b> ({DIAS_SEMANA[f.weekday()]} {f.strftime('%d/%m')})\n"
+                               f"Los días de balance el precio suele moverse fuerte."))
+
     for s in seguidas:
         t, obj = s["ticker"], s.get("precio_compra")
         precio = precios.get("tickers", {}).get(t, {}).get("ars")
@@ -248,6 +300,30 @@ def resumen_usuario(nombre, posiciones, seguidas, precios, ranking):
             obj = float(s["precio_compra"]) if s.get("precio_compra") else None
             txt = "✅ en tu precio" if obj and pr <= obj else (f"falta bajar {fmt((1 - obj / pr) * 100, 1)}%" if obj else "")
             lineas.append(f"• {s['ticker']} {pesos(pr)} {('· ' + txt) if txt else ''}")
+    # Noticias del día de tus acciones
+    noticias = []
+    for t in [p["ticker"] for p in posiciones] + [s["ticker"] for s in seguidas]:
+        for n in precios.get("tickers", {}).get(t, {}).get("noticias", []):
+            if all(n["url"] != x[1]["url"] for x in noticias):
+                noticias.append((t, n))
+    if noticias:
+        lineas.append("\n📰 <b>Noticias de tus acciones</b>")
+        for t, n in noticias[:MAX_NOTICIAS_RESUMEN]:
+            titulo = n["titulo"].replace("<", "").replace(">", "")
+            lineas.append(f"• <b>{t}</b>: <a href=\"{n['url']}\">{titulo}</a>")
+
+    # Próximos balances
+    prox = []
+    for t in sorted({p["ticker"] for p in posiciones} | {s["ticker"] for s in seguidas}):
+        fecha = precios.get("tickers", {}).get(t, {}).get("balance")
+        if fecha:
+            f = datetime.strptime(fecha, "%Y-%m-%d").date()
+            if (f - ahora_arg().date()).days <= 14:
+                prox.append((f, t))
+    if prox:
+        lineas.append("\n📅 <b>Próximos balances</b>")
+        lineas += [f"• {t}: {DIAS_SEMANA[f.weekday()]} {f.strftime('%d/%m')}" for f, t in sorted(prox)]
+
     top = sorted(ranking, key=lambda a: -a.get("Puntaje", 0))[:TOP_RESUMEN]
     if top:
         lineas.append("\n🏆 <b>Top del radar</b>")
@@ -265,17 +341,15 @@ def main():
     if not (SUPABASE_URL and SUPABASE_SECRET and TOKEN):
         raise SystemExit("Faltan secretos: SUPABASE_SECRET y/o TELEGRAM_TOKEN.")
 
-    perfiles = sb_get("perfiles", "select=id,email,nombre,aprobado,telegram_chat_id,telegram_codigo")
+    perfiles = sb_get("perfiles", "select=id,email,nombre,aprobado,telegram_chat_id,telegram_codigo,aviso_movimiento")
     procesar_mensajes(perfiles)
 
     usuarios = [p for p in perfiles if p.get("aprobado") and p.get("telegram_chat_id")]
-    if not usuarios:
-        print("Nadie vinculado todavía.")
-        return
 
     precios = leer_json("precios.json")
     ranking = leer_json("data.json").get("acciones", [])
     ops = sb_get("operaciones", "select=*")
+    aprobados = [p for p in perfiles if p.get("aprobado")]
     objs = sb_get("objetivos", "select=*")
     seg = sb_get("seguimiento", "select=*")
     ya = {(a["usuario"], a["clave"]) for a in sb_get("avisos_enviados", "select=usuario,clave")}
@@ -286,6 +360,15 @@ def main():
     toca_resumen = ahora.weekday() < 5 and (ahora.hour, ahora.minute) >= HORA_RESUMEN
     nuevos = []
 
+    # Stop dinámico: actualizar el precio máximo de todos (tengan o no Telegram)
+    if precios_de_hoy:
+        for u in aprobados:
+            mis_objs = {o["ticker"]: o for o in objs if o["usuario"] == u["id"]}
+            for p in calcular_posiciones([o for o in ops if o["usuario"] == u["id"]], mis_objs, precios):
+                if p.get("max_nuevo"):
+                    sb_patch("objetivos", f"usuario=eq.{u['id']}&ticker=eq.{p['ticker']}", {"max_precio": round(p["max_nuevo"], 4)})
+                    mis_objs[p["ticker"]]["max_precio"] = p["max_nuevo"]
+
     for u in usuarios:
         uid, chat = u["id"], u["telegram_chat_id"]
         nombre = u.get("nombre") or u["email"].split("@")[0]
@@ -294,7 +377,7 @@ def main():
         seguidas = [s for s in seg if s["usuario"] == uid]
 
         if precios_de_hoy:
-            for clave, texto in avisos_de_usuario(posiciones, seguidas, precios):
+            for clave, texto in avisos_de_usuario(posiciones, seguidas, precios, float(u.get("aviso_movimiento") or 0), hoy):
                 if (uid, clave) not in ya and enviar(chat, texto):
                     nuevos.append({"usuario": uid, "clave": clave})
                     ya.add((uid, clave))
@@ -305,6 +388,8 @@ def main():
                 nuevos.append({"usuario": uid, "clave": clave_res})
 
     sb_insert_ignorar("avisos_enviados", nuevos)
+    if not usuarios:
+        print("Nadie vinculado a Telegram todavía.")
     print(f"Listo: {len(usuarios)} usuarios con Telegram · {len(nuevos)} mensajes enviados.")
 
 

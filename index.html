@@ -428,6 +428,14 @@ async function renderCuenta() {
         <button class="chip" id="nombreBtn">Guardar</button>
       </div>
     </div>
+    <div class="pcard">
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Aviso de movimientos fuertes</div>
+      <div class="sub" style="margin-top:6px">Te aviso por Telegram si una acción de tu cartera o seguimiento sube o baja más que esto en el día.</div>
+      <div class="chips" id="movChips" style="flex-wrap:wrap">
+        ${[[0, "Desactivado"], [3, "±3%"], [5, "±5%"], [7, "±7%"], [10, "±10%"]].map(([v, t]) =>
+          `<button class="chip${+(perfil.aviso_movimiento ?? 5) === v ? " on" : ""}" data-mov="${v}">${t}</button>`).join("")}
+      </div>
+    </div>
     <div class="pcard" id="tgBox">
       <div style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Avisos por Telegram</div>
       ${perfil.telegram_chat_id
@@ -446,6 +454,11 @@ async function renderCuenta() {
     await sb.rpc("cambiar_nombre", { nuevo: $("nombreInp").value });
     renderCuenta();
   };
+  $("movChips").querySelectorAll("[data-mov]").forEach((b) => b.onclick = async () => {
+    await sb.rpc("cambiar_aviso_movimiento", { pct: +b.dataset.mov });
+    perfil.aviso_movimiento = +b.dataset.mov;
+    $("movChips").querySelectorAll("[data-mov]").forEach((x) => x.classList.toggle("on", x === b));
+  });
   if ($("tgOn")) $("tgOn").addEventListener("click", () => { $("tgAyuda").style.display = "block"; });
   if ($("tgOff")) $("tgOff").onclick = async () => {
     if (!confirm("¿Dejar de recibir avisos por Telegram?")) return;
@@ -512,9 +525,15 @@ function calcularPosiciones() {
       p.efDolar = (precios.ccl / (cclC / peso) - 1) * 100;
     }
     const ob = objs[p.ticker] || {};
-    p.sugerido = !ob.vender_en && !ob.stop;
+    p.sugerido = !ob.vender_en && !ob.stop && ob.stop_tipo !== "dinamico";
     p.objetivo = ob.vender_en ? +ob.vender_en : p.ppc ? p.ppc * (1 + SUG_VENTA / 100) : null;
-    p.stop = ob.stop ? +ob.stop : p.ppc ? p.ppc * (1 - SUG_STOP / 100) : null;
+    p.dinamico = ob.stop_tipo === "dinamico" && ob.stop_pct;
+    if (p.dinamico) {
+      p.maximo = Math.max(+ob.max_precio || 0, p.ppc || 0, p.precio || 0);
+      p.stop = p.maximo * (1 - ob.stop_pct / 100);
+    } else {
+      p.stop = ob.stop ? +ob.stop : p.ppc ? p.ppc * (1 - SUG_STOP / 100) : null;
+    }
     p.situacion = "normal";
     if (p.precio != null) {
       if (p.objetivo && p.precio >= p.objetivo) p.situacion = "objetivo";
@@ -587,7 +606,7 @@ function seccionSeguimiento() {
     else estado = `<small>Sin precio de compra</small>`;
     return `<div class="arow">
       <span><b>${esc(s.ticker)}</b>${nota != null ? ` <span class="chip" style="padding:2px 7px;font-size:11px">radar ${Math.round(nota)}</span>` : ""}
-        <small>${precio != null ? `Hoy ${ars(precio)}${pr.ars_prev ? ` · <span class="${clsSigno(precio - pr.ars_prev)}">${pctTxt((precio / pr.ars_prev - 1) * 100)}</span>` : ""}` : ""}${s.nota ? ` · ${esc(s.nota)}` : ""}</small>${estado}</span>
+        <small>${precio != null ? `Hoy ${ars(precio)}${pr.ars_prev ? ` · <span class="${clsSigno(precio - pr.ars_prev)}">${pctTxt((precio / pr.ars_prev - 1) * 100)}</span>` : ""}` : ""}${s.nota ? ` · ${esc(s.nota)}` : ""}</small>${estado}${balanceTxt(s.ticker) ? `<small>${balanceTxt(s.ticker)}</small>` : ""}</span>
       <button class="chip" data-seg="${esc(s.ticker)}">Editar</button>
     </div>`;
   }).join("");
@@ -632,6 +651,17 @@ async function seguirDesdeRanking(ticker) {
   formSeguimiento(ticker);
 }
 
+function balanceTxt(ticker) {
+  const f = precios?.tickers?.[ticker]?.balance;
+  if (!f) return "";
+  const dias = Math.round((Date.parse(f + "T12:00:00") - Date.parse(hoyISO() + "T12:00:00")) / 864e5);
+  if (dias < 0 || dias > 45) return "";
+  const d = new Date(f + "T12:00:00");
+  const dia = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"][d.getDay()];
+  const cuando = dias === 0 ? "hoy" : dias === 1 ? "mañana" : `en ${dias} días`;
+  return `📅 Balance ${dia} ${f.slice(8, 10)}/${f.slice(5, 7)} (${cuando})`;
+}
+
 function tarjetaPos(p) {
   const sinPrecio = p.precio == null;
   const split = p.efAccion != null ? `<div class="split">Por la acción <b class="${clsSigno(p.efAccion)}">${pctTxt(p.efAccion)}</b> · por el dólar CCL <b class="${clsSigno(p.efDolar)}">${pctTxt(p.efDolar)}</b></div>` : "";
@@ -647,6 +677,7 @@ function tarjetaPos(p) {
       ${p.nota != null ? `<span>Nota radar <b>${Math.round(p.nota)}</b></span>` : ""}
     </div>
     ${split}
+    ${balanceTxt(p.ticker) ? `<div class="split">${balanceTxt(p.ticker)}</div>` : ""}
     ${barraPos(p)}
     ${estadoPos(p)}`}
     <div class="mini-acc">
@@ -666,7 +697,7 @@ function barraPos(p) {
       <div class="mk ${pp < 15 ? "izq" : pp > 85 ? "der" : ""}" style="left:${pp.toFixed(1)}%" data-l="Hoy ${ars(p.precio)}"></div>
     </div>
     <div class="rlbl">
-      <span>Stop${p.sugerido ? ' <span class="sug">(sug.)</span>' : ""}<br><b>${ars(p.stop)}</b></span>
+      <span>${p.dinamico ? `Stop dinám. <span class="sug">(−${num(+objs[p.ticker].stop_pct)}%)</span>` : `Stop${p.sugerido ? ' <span class="sug">(sug.)</span>' : ""}`}<br><b>${ars(p.stop)}</b></span>
       <span class="c">PPC<br><b>${ars(p.ppc)}</b></span>
       <span style="text-align:right">Vender${p.sugerido ? ' <span class="sug">(sug.)</span>' : ""}<br><b>${ars(p.objetivo)}</b></span>
     </div>`;
@@ -743,17 +774,43 @@ function formObjetivos(ticker) {
   const p = posiciones.find((x) => x.ticker === ticker);
   const ob = objs[ticker] || {};
   const pctDe = (v) => v && p.ppc ? pctTxt((v / p.ppc - 1) * 100) + " vs PPC" : "";
+  let tipo = ob.stop_tipo === "dinamico" ? "dinamico" : "fijo";
+  const maxBase = Math.max(+ob.max_precio || 0, p.ppc || 0, p.precio || 0);
   abrirModal(`<h2>Objetivos · ${esc(ticker)}</h2>
     <div class="sub" style="margin-bottom:12px">PPC ${ars(p.ppc)} · hoy ${ars(p.precio)}</div>
     <div class="campo"><label>Vender cuando llegue a ($)</label><input id="oVenta" type="number" inputmode="decimal" step="any" value="${ob.vender_en ? +ob.vender_en : Math.round(p.objetivo)}"><small id="oVentaPct">${pctDe(ob.vender_en || p.objetivo)}</small></div>
-    <div class="campo"><label>Stop: avisarme si baja de ($)</label><input id="oStop" type="number" inputmode="decimal" step="any" value="${ob.stop ? +ob.stop : Math.round(p.stop)}"><small id="oStopPct">${pctDe(ob.stop || p.stop)}</small></div>
-    <div class="campo"><small>Sugeridos: vender a +${SUG_VENTA}% y stop a −${SUG_STOP}% de tu PPC.</small></div>
+    <div class="campo"><label>Tipo de stop</label>
+      <div class="ctabs" style="margin:0"><button data-t="fijo">Fijo</button><button data-t="dinamico">Dinámico</button></div></div>
+    <div id="oFijo" class="campo"><label>Stop: avisarme si baja de ($)</label><input id="oStop" type="number" inputmode="decimal" step="any" value="${ob.stop ? +ob.stop : Math.round(p.stop)}"><small id="oStopPct">${pctDe(ob.stop || p.stop)}</small></div>
+    <div id="oDin" class="campo"><label>Avisarme si cae este % desde su precio más alto</label><input id="oPct" type="number" inputmode="decimal" step="any" min="1" max="50" value="${ob.stop_pct ? +ob.stop_pct : SUG_STOP}">
+      <small id="oDinTxt"></small>
+      <small>El stop <b>sube solo</b> cuando la acción sube, y nunca baja. Sirve para proteger la ganancia.</small></div>
+    <div class="campo"><small>Sugeridos: vender a +${SUG_VENTA}% y stop fijo a −${SUG_STOP}% de tu PPC.</small></div>
     <div class="acciones"><button id="oSug">Usar sugeridos</button><button class="pri" id="oGuardar">Guardar</button></div>`);
+  const pintar = () => {
+    $("hoja").querySelectorAll("[data-t]").forEach((b) => b.classList.toggle("on", b.dataset.t === tipo));
+    $("oFijo").style.display = tipo === "fijo" ? "block" : "none";
+    $("oDin").style.display = tipo === "dinamico" ? "block" : "none";
+    const pc = +$("oPct").value || 0;
+    $("oDinTxt").innerHTML = pc > 0 ? `Precio más alto: ${ars(maxBase)} → stop hoy en <b>${ars(maxBase * (1 - pc / 100))}</b>` : "";
+  };
+  $("hoja").querySelectorAll("[data-t]").forEach((b) => b.onclick = () => { tipo = b.dataset.t; pintar(); });
+  $("oPct").oninput = pintar;
+  pintar();
   $("oVenta").oninput = () => $("oVentaPct").textContent = pctDe(+$("oVenta").value);
   $("oStop").oninput = () => $("oStopPct").textContent = pctDe(+$("oStop").value);
   $("oSug").onclick = async () => { await sb.from("objetivos").delete().eq("ticker", ticker); cerrarModal(); renderMiCartera(); };
   $("oGuardar").onclick = async () => {
-    await sb.from("objetivos").upsert({ ticker, vender_en: +$("oVenta").value || null, stop: +$("oStop").value || null });
+    const fila = { ticker, vender_en: +$("oVenta").value || null, stop_tipo: tipo };
+    if (tipo === "dinamico") {
+      const pc = +$("oPct").value;
+      if (!(pc > 0 && pc < 90)) return alert("Poné un % entre 1 y 89.");
+      Object.assign(fila, { stop_pct: pc, stop: null, max_precio: ob.stop_tipo === "dinamico" ? maxBase : Math.max(p.ppc || 0, p.precio || 0) });
+    } else {
+      Object.assign(fila, { stop: +$("oStop").value || null, stop_pct: null, max_precio: null });
+    }
+    const { error } = await sb.from("objetivos").upsert(fila);
+    if (error) return alert("No se pudo guardar: " + error.message);
     cerrarModal(); renderMiCartera();
   };
 }

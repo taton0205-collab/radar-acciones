@@ -126,6 +126,46 @@ def iol_cotizacion(token, simbolo):
         return None, None
 
 
+# ----------------------------- balances y noticias -----------------------------
+
+def proximo_balance(ticker):
+    """Fecha (YYYY-MM-DD) del próximo balance de la empresa, si Yahoo la tiene."""
+    try:
+        cal = yf.Ticker(ticker).calendar
+        fechas = cal.get("Earnings Date") if isinstance(cal, dict) else cal.loc["Earnings Date"].tolist()
+        hoy = ahora_arg().date()
+        futuras = sorted(pd.Timestamp(f).date() for f in (fechas or []) if pd.Timestamp(f).date() >= hoy)
+        return futuras[0].isoformat() if futuras else None
+    except Exception:
+        return None
+
+
+def noticias_recientes(ticker, horas=30, maximo=3):
+    """Últimas noticias de la empresa (de las últimas `horas`)."""
+    salida = []
+    try:
+        limite = datetime.now(timezone.utc) - timedelta(hours=horas)
+        for n in yf.Ticker(ticker).news or []:
+            c = n.get("content", n)
+            titulo = c.get("title")
+            url = ((c.get("canonicalUrl") or {}).get("url") or (c.get("clickThroughUrl") or {}).get("url") or c.get("link"))
+            fecha = c.get("pubDate") or ""
+            if not fecha and c.get("providerPublishTime"):
+                fecha = datetime.fromtimestamp(c["providerPublishTime"], timezone.utc).isoformat()
+            try:
+                if fecha and pd.Timestamp(fecha).tz_convert("UTC") < limite:
+                    continue
+            except Exception:
+                pass
+            if titulo and url:
+                salida.append({"titulo": titulo, "url": url, "fuente": (c.get("provider") or {}).get("displayName", ""), "fecha": fecha})
+            if len(salida) >= maximo:
+                break
+    except Exception:
+        pass
+    return salida
+
+
 def cierres(df, simbolo):
     """Serie de cierres diarios de un símbolo (vacía si no hay)."""
     try:
@@ -218,6 +258,8 @@ def main():
             "usd": round(usd, 4) if usd else None,
             "usd_prev": round(usd_prev, 4) if usd_prev else None,
             "usd_hist": {d.strftime("%Y-%m-%d"): round(float(v), 4) for d, v in usd_d.items()},
+            "balance": proximo_balance(t),
+            "noticias": noticias_recientes(t),
         }
 
     datos = {
