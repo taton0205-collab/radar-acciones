@@ -276,6 +276,7 @@ const NOMBRES = {
   "SMA50>SMA200": "Cruce SMA50/200", "RSI en zona": "RSI", "Volumen en alza": "Volumen", "Cruce reciente": "Cruce reciente 🔥",
 };
 const FUND = ["P/E", "ROE", "Deuda/Pat", "Crec. ingresos", "Crec. ganancias", "FCF positivo"];
+const ARG = "🇦🇷 Argentina", ETF = "📦 ETFs";
 const TEC = ["Precio>SMA200", "SMA50>SMA200", "RSI en zona", "Volumen en alza", "Cruce reciente"];
 
 function lista() {
@@ -287,7 +288,9 @@ function lista() {
       return maxSector <= 0 || cuenta[d.Sector] <= maxSector;
     }).slice(0, TOP_N);
   }
-  if (sector !== "Todos") l = l.filter((d) => d.Sector === sector);
+  if (sector === ARG) l = l.filter((d) => d.Mercado === "Argentina");
+  else if (sector === ETF) l = l.filter((d) => d.Mercado === "ETF");
+  else if (sector !== "Todos") l = l.filter((d) => d.Sector === sector);
   if (busqueda) {
     const q = busqueda.toLowerCase();
     l = l.filter((d) => d.Ticker.toLowerCase().includes(q) || (d.Empresa || "").toLowerCase().includes(q));
@@ -892,7 +895,9 @@ function motivos(d) {
     "Volumen en alza": "El volumen es cuánto se opera. Si sube, hay más gente interesada en la acción.",
     "Cruce reciente": "Es el momento en que la acción empieza a acelerar: suma hasta 10 puntos extra a la nota técnica si pasó hace menos de 30 días.",
   };
+  const esEtf = d["Nota fund"] == null;
   const regla = (k, bien, mal) => {
+    if (esEtf && FUND.includes(k)) return;
     const nota = n[k] ?? 0;
     const sec = d._sector && d._sector[k];
     const extra = sec != null ? ` Promedio de su sector: ${num(sec)}${k === "P/E" ? "" : "%"}.` : "";
@@ -926,10 +931,11 @@ function motivos(d) {
     : `🔥 Cruce alcista hace ${dc} día${dc === 1 ? "" : "s"}: recién empieza a acelerar`, EXPLICA["Cruce reciente"]]);
 
   const nf = d["Nota fund"], nt = d["Nota tec"];
-  const res = `Sacó ${Math.round(d.Puntaje)} porque tiene fundamentales ${califica(nf, true)} (${nf}) y un gráfico ${califica(nt, false)} (${nt}).`;
+  const res = esEtf ? `Sacó ${Math.round(d.Puntaje)}: es un ETF (un fondo con muchas empresas adentro), así que se califica solo por el gráfico, que está ${califica(nt, false)}.` : `Sacó ${Math.round(d.Puntaje)} porque tiene fundamentales ${califica(nf, true)} (${nf}) y un gráfico ${califica(nt, false)} (${nt}).`;
   const li = (arr, cls, ic) => arr.map(([t, e]) => `<li class="${cls}"><i>${ic}</i><span>${esc(t)}<small>${esc(e)}</small></span></li>`).join("");
   let conc;
-  if (nf >= 70 && nt >= 70) conc = "Empresa sólida y en buen momento. Es una buena candidata para investigar más a fondo.";
+  if (esEtf) conc = nt >= 70 ? "El fondo viene en buena tendencia." : nt >= 55 ? "Tendencia aceptable, sin mucha fuerza." : "El gráfico no acompaña por ahora.";
+  else if (nf >= 70 && nt >= 70) conc = "Empresa sólida y en buen momento. Es una buena candidata para investigar más a fondo.";
   else if (nf >= 70) conc = "Buena empresa, pero el gráfico no acompaña. Puede convenir esperar un mejor momento para entrar.";
   else if (nt >= 70) conc = "El precio viene bien, pero los números de la empresa no lo respaldan del todo. Es una apuesta más especulativa.";
   else conc = "Ni los números ni el gráfico se destacan. Hay mejores opciones en el ranking.";
@@ -980,9 +986,9 @@ function tarjeta(d) {
     <div class="row">
       <div class="rank">${d.puesto}</div>
       <div class="info">
-        <div class="tk">${esc(d.Ticker)}${cambio(d)}</div>
+        <div class="tk">${d.Mercado === "Argentina" ? "🇦🇷 " : ""}${esc(d.Ticker)}${cambio(d)}</div>
         <div class="name">${esc(d.Empresa)} · ${esc(d.Sector || "s/d")}</div>
-        <div class="bars">${barra("Fund.", d["Nota fund"])}${barra("Técn.", d["Nota tec"])}</div>
+        <div class="bars">${d["Nota fund"] == null ? "" : barra("Fund.", d["Nota fund"])}${barra("Técn.", d["Nota tec"])}</div>
       </div>
       <div class="score" style="background:color-mix(in srgb, ${colorNota(p)} 16%, transparent);color:${colorNota(p)}">${Math.round(p)}</div>
     </div>
@@ -1006,7 +1012,7 @@ function tarjeta(d) {
         <div class="kv"><b>${fmt(d.RSI)}</b><span>RSI</span></div>
         <div class="kv"><b>${fmt(d["% sobre SMA200"], "%")}</b><span>Sobre SMA200</span></div>
       </div>
-      <h3>Fundamental · ${d["Nota fund"]}</h3>${criterios(FUND, d._notas)}
+      ${d["Nota fund"] == null ? "" : `<h3>Fundamental · ${d["Nota fund"]}</h3>${criterios(FUND, d._notas)}`}
       <h3>Técnico · ${d["Nota tec"]}</h3>${criterios(TEC, d._notas)}
       <div class="links">
         <button class="news-btn" data-seguir="${esc(d.Ticker)}">👀 Seguir</button>
@@ -1024,7 +1030,7 @@ function render() {
 }
 
 function chips() {
-  const sectores = ["Todos", ...[...new Set(datos.map((d) => d.Sector).filter(Boolean))].sort()];
+  const sectores = ["Todos", ARG, ETF, ...[...new Set(datos.map((d) => d.Sector).filter((s) => s && s !== "ETF"))].sort()];
   $("chips").innerHTML = sectores.map((s) => `<button class="chip${s === sector ? " on" : ""}" data-s="${esc(s)}">${esc(s)}</button>`).join("");
 }
 

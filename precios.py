@@ -36,9 +36,14 @@ def ahora_arg():
     return datetime.now(timezone.utc) - timedelta(hours=3)
 
 
+# Argentinas: el ADR de Nueva York tiene otro nombre en la bolsa local
+SIMBOLO_LOCAL = {"YPF": "YPFD", "PAM": "PAMP", "TEO": "TECO2", "TGS": "TGSU2", "CRESY": "CRES", "IRS": "IRSA"}
+
+
 def simbolo_cedear(ticker):
-    """WDC -> WDC.BA · BRK-B -> BRKB.BA"""
-    return ticker.replace("-", "").replace(".", "") + ".BA"
+    """WDC -> WDC.BA · BRK-B -> BRKB.BA · YPF -> YPFD.BA"""
+    t = SIMBOLO_LOCAL.get(ticker, ticker)
+    return t.replace("-", "").replace(".", "") + ".BA"
 
 
 def tickers_en_uso():

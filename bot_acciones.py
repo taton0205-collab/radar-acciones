@@ -45,6 +45,14 @@ TICKERS = [
     "T", "VZ",
 ]
 
+# Argentinas: se analizan sus ADR en dólares (Nueva York), que tienen datos completos
+ARGENTINA = ["GGAL", "YPF", "PAM", "BMA", "BBAR", "SUPV", "CEPU", "TGS", "EDN",
+             "LOMA", "TEO", "CRESY", "IRS", "VIST", "MELI", "GLOB",
+             "TX", "CAAP", "ARCO", "BIOX"]
+# ETFs (fondos que se compran como una acción). No tienen balances: se califican solo por el gráfico
+ETFS = ["SPY", "QQQ", "DIA", "IWM", "EEM", "EWZ", "XLK", "XLF", "XLE", "XLV",
+        "SMH", "GLD", "SLV", "ARKK", "IBIT", "XLY", "XLI", "XLU", "EWJ", "FXI", "URA"]
+
 # --- Filtros fundamentales ---
 PE_MAX = 30                # P/E máximo
 ROE_MIN = 0.15             # ROE mínimo (0.15 = 15%)
@@ -231,6 +239,8 @@ def medianas_por_sector(filas):
     """Mediana de cada dato fundamental por sector."""
     sectores = {}
     for f in filas:
+        if f["_crudos"] is None:
+            continue  # ETFs: no tienen datos de empresa
         sectores.setdefault(f["Sector"], []).append(f["_crudos"])
     medianas = {}
     for sector, lista in sectores.items():
@@ -333,6 +343,8 @@ def main():
         except Exception as e:
             print(f"No se pudo bajar el S&P 500 ({e}). Uso la lista propia.")
 
+    extra = [t for t in ARGENTINA + ETFS if t not in tickers]
+    tickers = list(tickers) + extra
     print(f"Descargando precios de {len(tickers)} acciones...")
     precios = yf.download(
         tickers, period="1y", auto_adjust=True,
@@ -352,11 +364,20 @@ def main():
             if tecnico is None:
                 continue
             datos_tec, crit_tec, notas_tec = tecnico
-            if sum(crit_tec.values()) < TECNICO_MINIMO:
+            mercado = "ETF" if ticker in ETFS else "Argentina" if ticker in ARGENTINA else "EE.UU."
+            if mercado == "EE.UU." and sum(crit_tec.values()) < TECNICO_MINIMO:
                 continue  # gráfico flojo: no vale la pena pedir fundamentales
 
-            info = yf.Ticker(ticker).info
-            datos_fund, crit_fund, notas_fund, crudos = analisis_fundamental(info)
+            if mercado == "ETF":
+                try:
+                    info = yf.Ticker(ticker).info
+                except Exception:
+                    info = {}
+                info = {"shortName": info.get("shortName") or info.get("longName") or ticker, "sector": "ETF"}
+                datos_fund, crit_fund, notas_fund, crudos = {}, {}, {}, None
+            else:
+                info = yf.Ticker(ticker).info
+                datos_fund, crit_fund, notas_fund, crudos = analisis_fundamental(info)
         except Exception as e:
             print(f"\n  {ticker}: no se pudo analizar ({e})")
             continue
@@ -366,6 +387,7 @@ def main():
             "Ticker": ticker,
             "Empresa": info.get("shortName", ""),
             "Sector": info.get("sector", ""),
+            "Mercado": mercado,
             "Fund": f"{sum(crit_fund.values())}/{len(crit_fund)}",
             "Tec": f"{sum(crit_tec.values())}/{len(crit_tec)}",
             **datos_tec,
@@ -385,19 +407,23 @@ def main():
     # Notas finales: mezcla de valor absoluto + comparación con su sector
     medianas = medianas_por_sector(filas)
     for f in filas:
-        med = medianas.get(f["Sector"])
+        med = medianas.get(f["Sector"]) if f["_crudos"] is not None else None
         notas_fund = dict(f["_notas_abs"])
         if med:
             for k, rel in notas_vs_sector(f["_crudos"], med).items():
                 if rel is not None:
                     notas_fund[k] = notas_fund[k] * (1 - PESO_SECTOR) + rel * PESO_SECTOR
         notas_tec = f["_notas_tec"]
-        nota_fund = sum(notas_fund.values()) / len(notas_fund) * 100
+        nota_fund = sum(notas_fund.values()) / len(notas_fund) * 100 if notas_fund else None
         base = {k: v for k, v in notas_tec.items() if k != "Cruce reciente"}
         nota_tec = sum(base.values()) / len(base) * 100
         nota_tec = min(100.0, nota_tec + notas_tec.get("Cruce reciente", 0) * CRUCE_BONUS)
-        f["Puntaje"] = round(nota_fund * PESO_FUNDAMENTAL + nota_tec * PESO_TECNICO, 1)
-        f["Nota fund"] = round(nota_fund)
+        if nota_fund is None:   # ETF: solo cuenta el gráfico
+            f["Puntaje"] = round(nota_tec, 1)
+            f["Nota fund"] = None
+        else:
+            f["Puntaje"] = round(nota_fund * PESO_FUNDAMENTAL + nota_tec * PESO_TECNICO, 1)
+            f["Nota fund"] = round(nota_fund)
         f["Nota tec"] = round(nota_tec)
         f["_notas"] = {k: round(v * 100) for k, v in {**notas_fund, **notas_tec}.items()}
         pct = lambda v: round(v * 100, 1) if v is not None else None
