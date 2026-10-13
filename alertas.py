@@ -34,6 +34,7 @@ HORA_RESUMEN = (19, 30)  # hora Argentina
 TOP_RESUMEN = 3
 DIAS_AVISO_BALANCE = 3   # avisar balances con esta anticipación
 MAX_NOTICIAS_RESUMEN = 5
+SEMANAL = (6, (11, 0))   # domingo 11:00 hora Argentina
 DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 
 
@@ -335,6 +336,102 @@ def resumen_usuario(nombre, posiciones, seguidas, precios, ranking):
     return "\n".join(lineas)
 
 
+def _valor_hasta(hist, fecha):
+    """Último valor de un historial {fecha: valor} en o antes de 'fecha' (YYYY-MM-DD)."""
+    claves = [f for f in hist if f <= fecha]
+    return hist[max(claves)] if claves else None
+
+
+def precio_hace_una_semana(t, precios):
+    """Estima el precio en pesos de hace 7 días: movimiento de la acción en dólares x movimiento del CCL."""
+    pr = precios.get("tickers", {}).get(t, {})
+    hace7 = (ahora_arg().date() - timedelta(days=7)).isoformat()
+    # 1) Si ya tenemos el precio en pesos guardado, usamos ese (exacto)
+    real = _valor_hasta(pr.get("ars_hist") or {}, hace7)
+    if real:
+        return real
+    # 2) Si no, lo estimamos (solo para CEDEARs/ADRs conocidos del radar)
+    if t not in CONOCIDOS:
+        return None
+    ars, uh, ch = pr.get("ars"), pr.get("usd_hist") or {}, precios.get("ccl_hist") or {}
+    if not (ars and uh and ch):
+        return None
+    u_ahora, u_antes = uh[max(uh)], _valor_hasta(uh, hace7)
+    c_ahora, c_antes = ch[max(ch)], _valor_hasta(ch, hace7)
+    if not (u_antes and c_antes):
+        return None
+    return ars / ((u_ahora / u_antes) * (c_ahora / c_antes))
+
+
+CONOCIDOS = set()   # tickers del radar (EE.UU., ADRs argentinos y ETFs); se completa en main()
+
+
+def resumen_semanal(nombre, posiciones, ops_usuario, precios, ranking):
+    hoy = ahora_arg().date()
+    lineas = [f"🗓 <b>Tu semana</b> · {nombre}\n<i>del {(hoy - timedelta(days=7)).strftime('%d/%m')} al {hoy.strftime('%d/%m')}</i>"]
+    con_precio = [p for p in posiciones if p["precio"] is not None]
+    if con_precio:
+        filas = []
+        for p in con_precio:
+            antes = precio_hace_una_semana(p["ticker"], precios)
+            if antes:
+                filas.append((p, (p["precio"] / antes - 1) * 100, (p["precio"] - antes) * p["cant"]))
+        val = sum(p["precio"] * p["cant"] for p in con_precio)
+        inv = sum(p["costo"] for p in con_precio)
+        g = val - inv
+        if filas:
+            g_sem = sum(x[2] for x in filas)
+            base = sum(x[0]["precio"] * x[0]["cant"] - x[2] for x in filas)
+            icono = "📈" if g_sem >= 0 else "📉"
+            lineas.append(f"\n{icono} En la semana: <b>{'+' if g_sem >= 0 else '-'}{pesos(abs(g_sem))}</b> ({pct(g_sem / base * 100)})")
+        lineas.append(f"💰 Tu cartera vale <b>{pesos(val)}</b>\n   Ganancia total: {'+' if g >= 0 else '-'}{pesos(abs(g))} ({pct(g / inv * 100)})")
+        if len(filas) >= 2:
+            filas.sort(key=lambda x: -x[1])
+            m, w = filas[0], filas[-1]
+            lineas.append(f"\n🥇 Mejor: <b>{m[0]['ticker']}</b> {pct(m[1])}")
+            lineas.append(f"🥴 Peor: <b>{w[0]['ticker']}</b> {pct(w[1])}")
+        if filas:
+            lineas.append("\n<b>Cada una en la semana</b>")
+            lineas += [f"• {p['ticker']} {pct(v)}" for p, v, _ in filas]
+
+    # Tus operaciones de la semana
+    desde = (hoy - timedelta(days=7)).isoformat()
+    recientes = sorted([o for o in ops_usuario if o["fecha"] >= desde], key=lambda o: o["fecha"])
+    if recientes:
+        lineas.append("\n🧾 <b>Tus operaciones</b>")
+        lineas += [f"• {'🟢 Compraste' if o['tipo'] == 'compra' else '🔴 Vendiste'} {float(o['cantidad']):g} {o['ticker']} a {pesos(float(o['precio']))}" for o in recientes]
+
+    # Lo que viene: balances de los próximos 7 días
+    prox = []
+    for p in posiciones:
+        fecha = precios.get("tickers", {}).get(p["ticker"], {}).get("balance")
+        if fecha:
+            f = datetime.strptime(fecha, "%Y-%m-%d").date()
+            if 0 <= (f - hoy).days <= 7:
+                prox.append((f, p["ticker"]))
+    if prox:
+        lineas.append("\n📅 <b>Esta semana presentan balance</b>")
+        lineas += [f"• {t}: {DIAS_SEMANA[f.weekday()]} {f.strftime('%d/%m')}" for f, t in sorted(prox)]
+
+    top = sorted(ranking, key=lambda a: -a.get("Puntaje", 0))[:TOP_RESUMEN]
+    if top:
+        lineas.append("\n🏆 <b>Top del radar</b>")
+        lineas += [f"{i}. {a['Ticker']} · {fmt(a['Puntaje'], 0)}" for i, a in enumerate(top, 1)]
+    cruces = sorted([a for a in ranking if a.get("Días desde cruce") is not None and a["Días desde cruce"] <= 7],
+                    key=lambda a: -a.get("Puntaje", 0))[:3]
+    if cruces:
+        lineas.append("\n🔥 <b>Cruces alcistas de la semana</b>")
+        lineas += [f"• {a['Ticker']} · nota {fmt(a['Puntaje'], 0)}" for a in cruces]
+    if precios.get("ccl"):
+        ch = precios.get("ccl_hist") or {}
+        antes = _valor_hasta(ch, (hoy - timedelta(days=7)).isoformat())
+        extra = f" ({pct((precios['ccl'] / antes - 1) * 100)} en la semana)" if antes else ""
+        lineas.append(f"\n💵 Dólar CCL: {pesos(precios['ccl'], 2)}{extra}")
+    if APP_URL:
+        lineas.append(f"\n🔗 {APP_URL}")
+    return "\n".join(lineas)
+
+
 # ----------------------------- principal -----------------------------
 
 def main():
@@ -348,6 +445,7 @@ def main():
 
     precios = leer_json("precios.json")
     ranking = leer_json("data.json").get("acciones", [])
+    CONOCIDOS.update(a["Ticker"] for a in ranking)
     ops = sb_get("operaciones", "select=*")
     aprobados = [p for p in perfiles if p.get("aprobado")]
     objs = sb_get("objetivos", "select=*")
@@ -358,6 +456,7 @@ def main():
     hoy = ahora.strftime("%Y-%m-%d")
     precios_de_hoy = precios.get("actualizado", "").startswith(ahora.strftime("%d/%m/%Y"))
     toca_resumen = ahora.weekday() < 5 and (ahora.hour, ahora.minute) >= HORA_RESUMEN
+    toca_semanal = ahora.weekday() == SEMANAL[0] and (ahora.hour, ahora.minute) >= SEMANAL[1]
     nuevos = []
 
     # Stop dinámico: actualizar el precio máximo de todos (tengan o no Telegram)
@@ -386,6 +485,12 @@ def main():
         if toca_resumen and (uid, clave_res) not in ya and (posiciones or seguidas):
             if enviar(chat, resumen_usuario(nombre, posiciones, seguidas, precios, ranking)):
                 nuevos.append({"usuario": uid, "clave": clave_res})
+
+        clave_sem = f"semanal|{hoy}"
+        if toca_semanal and (uid, clave_sem) not in ya and posiciones:
+            mis_ops = [o for o in ops if o["usuario"] == uid]
+            if enviar(chat, resumen_semanal(nombre, posiciones, mis_ops, precios, ranking)):
+                nuevos.append({"usuario": uid, "clave": clave_sem})
 
     sb_insert_ignorar("avisos_enviados", nuevos)
     if not usuarios:

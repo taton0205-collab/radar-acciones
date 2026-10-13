@@ -171,6 +171,14 @@ def noticias_recientes(ticker, horas=30, maximo=3):
     return salida
 
 
+def guardar_hist(hist, fecha, valor, dias=400):
+    """Agrega el precio de hoy al historial en pesos y deja solo los últimos `dias`."""
+    hist = dict(hist or {})
+    if valor:
+        hist[fecha] = round(valor, 2)
+    return {k: hist[k] for k in sorted(hist)[-dias:]}
+
+
 def cierres(df, simbolo):
     """Serie de cierres diarios de un símbolo (vacía si no hay)."""
     try:
@@ -242,6 +250,14 @@ def main():
                 precios_iol[t] = pr
         print(f"IOL: precio para {len(precios_iol)} de {len(tickers)} tickers")
 
+    # Historial de precios en pesos (se va armando con cada corrida)
+    try:
+        with open(ARCHIVO, encoding="utf-8") as f:
+            viejo = json.load(f).get("tickers", {})
+    except Exception:
+        viejo = {}
+    hoy_txt = ahora_arg().strftime("%Y-%m-%d")
+
     # ---- Cada ticker ----
     salida = {}
     for t in tickers:
@@ -263,6 +279,7 @@ def main():
             "usd": round(usd, 4) if usd else None,
             "usd_prev": round(usd_prev, 4) if usd_prev else None,
             "usd_hist": {d.strftime("%Y-%m-%d"): round(float(v), 4) for d, v in usd_d.items()},
+            "ars_hist": guardar_hist(viejo.get(t, {}).get("ars_hist", {}), hoy_txt, ars),
             "balance": proximo_balance(t),
             "noticias": noticias_recientes(t),
         }
