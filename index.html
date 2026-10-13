@@ -644,11 +644,11 @@ function distribucion(abiertas) {
     return `<div class="estado bad" style="margin:0 0 8px">⚠️ <b>${esc(f.t)}</b> es el ${num(f.pct)}% de tu cartera. Para bajarla al ${MAX_PESO}% tendrías que vender unos ${ars(vender)}, o comprar otras acciones.</div>`;
   }).join("");
   const top = filas.slice(0, 8), resto = filas.slice(8).reduce((s, f) => s + f.pct, 0);
-  if (resto > 0) top.push({ t: "Otras", pct: resto });
+  if (resto > 0) top.push({ t: "Otras", pct: resto, n: filas.length - 8 });
   return `<div class="hist" style="margin-bottom:12px">
     <div class="top"><span>Cuánto pesa cada acción</span><b>${altas.length ? "⚠️ concentrada" : "✅ diversificada"}</b></div>
     ${aviso}
-    ${top.map((f) => `<div class="crit"><span>${esc(f.t)}</span><div class="track"><div class="fill" style="width:${Math.min(100, f.pct * 2)}%;background:${f.pct > MAX_PESO ? "var(--low)" : "var(--accent)"}"></div></div><span class="n">${Math.round(f.pct)}%</span></div>`).join("")}
+    ${top.map((f) => `<div class="crit"><span>${esc(f.t)}${f.n ? ` (${f.n})` : ""}</span><div class="track"><div class="fill" style="width:${Math.min(100, f.pct * 2)}%;background:${f.t === "Otras" ? "var(--muted)" : f.pct > MAX_PESO ? "var(--low)" : "var(--accent)"}"></div></div><span class="n">${Math.round(f.pct)}%</span></div>`).join("")}
     <div style="font-size:12px;color:var(--muted);margin-top:6px">Recomendado: ninguna acción arriba del ${MAX_PESO}%.</div>
   </div>`;
 }
