@@ -549,6 +549,88 @@ function calcularPosiciones() {
   }).sort((a, b) => (b.valor ?? 0) - (a.valor ?? 0));
 }
 
+// ---------- Gráfico: cuánto valía tu cartera cada día ----------
+let periodoGraf = "3M";
+try { periodoGraf = localStorage.getItem("periodoGraf") || "3M"; } catch {}
+const PERIODOS = { "1M": 30, "3M": 91, "6M": 182, "1A": 365, "Todo": 1e5 };
+
+function precioEnFecha(t, fecha, ultimaOp) {
+  const pr = precios?.tickers?.[t] || {};
+  const hist = pr.ars_hist || {};
+  const fechasH = Object.keys(hist).sort();
+  if (fecha >= hoyISO() && pr.ars) return pr.ars;
+  if (fechasH.length && fecha >= fechasH[0]) return valorEn(hist, fecha);
+  // Antes de que existiera el historial en pesos: lo estimamos con el precio en dólares y el CCL
+  const conocido = datos.some((a) => a.Ticker === t);
+  const u = valorEn(pr.usd_hist, fecha), k = valorEn(precios?.ccl_hist, fecha);
+  if (conocido && pr.ars && pr.usd && precios?.ccl && u && k) return pr.ars / (pr.usd * precios.ccl) * u * k;
+  return ultimaOp ?? (fechasH.length ? hist[fechasH[0]] : pr.ars) ?? null;
+}
+
+function serieCartera() {
+  if (!ops.length || !precios) return [];
+  const orden = [...ops].sort((a, b) => a.fecha === b.fecha ? a.id - b.id : a.fecha < b.fecha ? -1 : 1);
+  const hoy = hoyISO();
+  const fechas = [...new Set([...Object.keys(precios.ccl_hist || {}), hoy])].filter((f) => f >= orden[0].fecha && f <= hoy).sort();
+  const pos = {}, ultPrecio = {};
+  let i = 0;
+  const salida = [];
+  for (const f of fechas) {
+    while (i < orden.length && orden[i].fecha <= f) {
+      const o = orden[i++], p = pos[o.ticker] ||= { cant: 0, costo: 0 };
+      const cant = +o.cantidad, precio = +o.precio;
+      ultPrecio[o.ticker] = precio;
+      if (o.tipo === "compra") { p.cant += cant; p.costo += cant * precio + (+o.comision || 0); }
+      else { const ppc = p.cant ? p.costo / p.cant : 0, q = Math.min(cant, p.cant); p.costo -= q * ppc; p.cant -= q; }
+    }
+    let valor = 0, inv = 0, ok = true;
+    for (const t in pos) {
+      if (pos[t].cant <= 1e-9) continue;
+      const pr = precioEnFecha(t, f, ultPrecio[t]);
+      if (pr == null) { ok = false; break; }
+      valor += pr * pos[t].cant; inv += pos[t].costo;
+    }
+    if (ok && inv > 0) salida.push([f, valor, inv]);
+  }
+  return salida;
+}
+
+function graficoCartera() {
+  const todo = serieCartera();
+  if (todo.length < 2) return "";
+  const desde = new Date(Date.now() - 3 * 36e5 - PERIODOS[periodoGraf] * 864e5).toISOString().slice(0, 10);
+  const s = todo.filter((x) => x[0] >= desde);
+  if (s.length < 2) return "";
+  const vals = s.flatMap((x) => [x[1], x[2]]);
+  const min = Math.min(...vals), max = Math.max(...vals), W = 300, H = 90;
+  const X = (i) => (i / (s.length - 1) * W).toFixed(1), Y = (v) => (H - (v - min) / (max - min || 1) * H).toFixed(1);
+  const lv = s.map((x, i) => `${X(i)},${Y(x[1])}`).join(" ");
+  const li = s.map((x, i) => `${X(i)},${Y(x[2])}`).join(" ");
+  const ini = s[0], fin = s[s.length - 1];
+  // Cambio en el período sin contar la plata que agregaste o sacaste
+  const cambio = (fin[1] - fin[2]) - (ini[1] - ini[2]);
+  const color = cambio >= 0 ? "var(--accent)" : "var(--low)";
+  const fc = (iso) => { const [, m, d] = iso.split("-"); return `${d}/${m}`; };
+  return `<div class="hist" id="grafCartera" style="margin-bottom:12px">
+    <div class="top"><span>Evolución de tu cartera</span><b class="${clsSigno(cambio)}">${cambio >= 0 ? "+" : "−"}${ars(Math.abs(cambio))}</b></div>
+    <div class="chips" style="padding:4px 0 8px">${Object.keys(PERIODOS).map((k) => `<button class="chip${k === periodoGraf ? " on" : ""}" data-per="${k}">${k}</button>`).join("")}</div>
+    <svg viewBox="-4 -4 ${W + 8} ${H + 8}" preserveAspectRatio="none" style="height:110px">
+      <polyline points="${li}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>
+      <polyline points="${lv}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+    </svg>
+    <div class="ax"><span>${fc(ini[0])}</span><span>${fc(fin[0])}</span></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px">— Valor de tu cartera &nbsp; - - Lo que pusiste</div>
+  </div>`;
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("#grafCartera [data-per]");
+  if (!b) return;
+  periodoGraf = b.dataset.per;
+  try { localStorage.setItem("periodoGraf", periodoGraf); } catch {}
+  $("grafCartera").outerHTML = graficoCartera();
+});
+
 async function renderMiCartera() {
   const box = $("carteraBox");
   const [r1, r2, r3] = await Promise.all([
@@ -587,6 +669,7 @@ async function renderMiCartera() {
       <div class="kv"><b>${ars(invertido)}</b><span>Invertido</span></div>
       <div class="kv"><b class="${clsSigno(realizado)}">${realizado >= 0 ? "+" : "−"}${ars(Math.abs(realizado))}</b><span>Ganancia ya realizada</span></div>
     </div>`;
+  html += graficoCartera();
   if (precios?.ccl) html += `<div class="sub" style="margin:-4px 0 10px">Dólar CCL: <b>${ars(precios.ccl, 2)}</b> · precios ${esc(precios.actualizado || "")}</div>`;
 
   html += abiertas.map(tarjetaPos).join("");
