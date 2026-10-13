@@ -34,6 +34,8 @@ HORA_RESUMEN = (19, 30)  # hora Argentina
 TOP_RESUMEN = 3
 DIAS_AVISO_BALANCE = 3   # avisar balances con esta anticipación
 MAX_NOTICIAS_RESUMEN = 5
+CAIDA_NOTA = 15         # avisar si la nota del radar cae esta cantidad de puntos
+DIAS_CAIDA = 5          # ...comparando contra el máximo de las últimas N actualizaciones
 SEMANAL = (6, (11, 0))   # domingo 11:00 hora Argentina
 DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 
@@ -432,6 +434,36 @@ def resumen_semanal(nombre, posiciones, ops_usuario, precios, ranking):
     return "\n".join(lineas)
 
 
+def avisos_nota(posiciones, historial):
+    """Avisa si una acción que tenés bajó mucho en el radar (o se cayó del ranking)."""
+    fechas = sorted(historial)
+    if len(fechas) < 2:
+        return []
+    ultima, previas = fechas[-1], fechas[-1 - DIAS_CAIDA:-1]
+    hoy_rk = historial[ultima]
+    avisos = []
+    for p in posiciones:
+        t = p["ticker"]
+        antes = [(historial[f][t], f) for f in previas if t in historial[f]]
+        if not antes:
+            continue
+        maximo, f_max = max(antes)
+        ahora = hoy_rk.get(t)
+        if ahora is None:
+            if t in historial[previas[-1]] and historial[previas[-1]][t] >= 60:
+                avisos.append((f"{t}|notacae|{ultima}",
+                               f"⚠️ <b>{t} salió del radar</b>\n"
+                               f"Tenía nota {fmt(historial[previas[-1]][t], 0)} y hoy su gráfico se debilitó tanto que quedó afuera del ranking.\n"
+                               f"Conviene revisarla."))
+        elif maximo - ahora >= CAIDA_NOTA:
+            dia = datetime.strptime(f_max, "%Y-%m-%d").strftime("%d/%m")
+            avisos.append((f"{t}|notacae|{ultima}",
+                           f"⚠️ <b>{t} bajó en el radar: {fmt(maximo, 0)} → {fmt(ahora, 0)}</b>\n"
+                           f"Perdió {fmt(maximo - ahora, 0)} puntos desde el {dia}. Puede ser que la empresa o el gráfico se estén debilitando.\n"
+                           f"Revisala en la app antes de decidir."))
+    return avisos
+
+
 # ----------------------------- principal -----------------------------
 
 def main():
@@ -444,7 +476,9 @@ def main():
     usuarios = [p for p in perfiles if p.get("aprobado") and p.get("telegram_chat_id")]
 
     precios = leer_json("precios.json")
-    ranking = leer_json("data.json").get("acciones", [])
+    datos_radar = leer_json("data.json")
+    ranking = datos_radar.get("acciones", [])
+    historial_radar = datos_radar.get("historial", {})
     CONOCIDOS.update(a["Ticker"] for a in ranking)
     ops = sb_get("operaciones", "select=*")
     aprobados = [p for p in perfiles if p.get("aprobado")]
@@ -480,6 +514,11 @@ def main():
                 if (uid, clave) not in ya and enviar(chat, texto):
                     nuevos.append({"usuario": uid, "clave": clave})
                     ya.add((uid, clave))
+
+        for clave, texto in avisos_nota(posiciones, historial_radar):
+            if (uid, clave) not in ya and enviar(chat, texto):
+                nuevos.append({"usuario": uid, "clave": clave})
+                ya.add((uid, clave))
 
         clave_res = f"resumen|{hoy}"
         if toca_resumen and (uid, clave_res) not in ya and (posiciones or seguidas):
