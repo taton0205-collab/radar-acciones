@@ -55,6 +55,9 @@ CREC_GANANCIAS_MIN = 0.0   # Crecimiento de ganancias mínimo (> 0%)
 
 # --- Filtros técnicos ---
 RSI_MIN, RSI_MAX = 40, 65  # Zona de RSI buscada
+# Cruce reciente: puntos extra si la SMA50 cruzó hacia arriba a la SMA200 hace poco
+CRUCE_DIAS_MAX = 30        # Hasta cuántos días atrás cuenta como "reciente"
+CRUCE_BONUS = 10           # Puntos extra máximos en la nota técnica (cruce de hoy = 10, de hace 30 días = 0)
 VOL_RATIO_MIN = 1.0        # Volumen últimos 20 días / últimos 60 días
 
 # --- Comparación contra el sector ---
@@ -138,7 +141,19 @@ def analisis_tecnico(df):
         "RSI en zona": nota_rango(rsi_actual, 30, 45, 60, 75),
         "Volumen en alza": escala(vol_ratio, 0.8, 1.3),
     }
-    datos = {"Precio": precio, "RSI": rsi_actual, "% sobre SMA200": dist_sma200}
+    # Cruce reciente: ¿hace cuántos días la SMA50 pasó arriba de la SMA200?
+    arriba = (cierre.rolling(50).mean() > cierre.rolling(200).mean()).iloc[199:]
+    dias_cruce = None
+    if bool(arriba.iloc[-1]):
+        cambios = arriba.ne(arriba.shift())
+        cambios.iloc[0] = False
+        idx = cambios[cambios].index
+        if len(idx):
+            dias_cruce = int(len(arriba.loc[idx[-1]:]) - 1)   # días hábiles desde el cruce
+    # Nota del cruce (bonus): 1 si cruzó hoy, baja hasta 0 a los CRUCE_DIAS_MAX días
+    notas["Cruce reciente"] = escala(dias_cruce, CRUCE_DIAS_MAX, 0) if dias_cruce is not None else 0.0
+
+    datos = {"Precio": precio, "RSI": rsi_actual, "% sobre SMA200": dist_sma200, "Días desde cruce": dias_cruce}
     return datos, criterios, notas
 
 
@@ -378,7 +393,9 @@ def main():
                     notas_fund[k] = notas_fund[k] * (1 - PESO_SECTOR) + rel * PESO_SECTOR
         notas_tec = f["_notas_tec"]
         nota_fund = sum(notas_fund.values()) / len(notas_fund) * 100
-        nota_tec = sum(notas_tec.values()) / len(notas_tec) * 100
+        base = {k: v for k, v in notas_tec.items() if k != "Cruce reciente"}
+        nota_tec = sum(base.values()) / len(base) * 100
+        nota_tec = min(100.0, nota_tec + notas_tec.get("Cruce reciente", 0) * CRUCE_BONUS)
         f["Puntaje"] = round(nota_fund * PESO_FUNDAMENTAL + nota_tec * PESO_TECNICO, 1)
         f["Nota fund"] = round(nota_fund)
         f["Nota tec"] = round(nota_tec)

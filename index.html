@@ -273,10 +273,10 @@ const NOMBRES = {
   "P/E": "P/E", "ROE": "ROE", "Deuda/Pat": "Deuda/Patrimonio",
   "Crec. ingresos": "Crec. ingresos", "Crec. ganancias": "Crec. ganancias",
   "FCF positivo": "Flujo de caja", "Precio>SMA200": "Tendencia (SMA200)",
-  "SMA50>SMA200": "Cruce SMA50/200", "RSI en zona": "RSI", "Volumen en alza": "Volumen",
+  "SMA50>SMA200": "Cruce SMA50/200", "RSI en zona": "RSI", "Volumen en alza": "Volumen", "Cruce reciente": "Cruce reciente 🔥",
 };
 const FUND = ["P/E", "ROE", "Deuda/Pat", "Crec. ingresos", "Crec. ganancias", "FCF positivo"];
-const TEC = ["Precio>SMA200", "SMA50>SMA200", "RSI en zona", "Volumen en alza"];
+const TEC = ["Precio>SMA200", "SMA50>SMA200", "RSI en zona", "Volumen en alza", "Cruce reciente"];
 
 function lista() {
   let l = datos.map((d, i) => ({ ...d, puesto: i + 1 }));
@@ -890,6 +890,7 @@ function motivos(d) {
     "SMA50>SMA200": "Si la media corta está arriba de la larga, el impulso reciente es positivo.",
     "RSI en zona": "El RSI (de 0 a 100) mide si subió o bajó demasiado rápido. Lo ideal es entre 45 y 60.",
     "Volumen en alza": "El volumen es cuánto se opera. Si sube, hay más gente interesada en la acción.",
+    "Cruce reciente": "Es el momento en que la acción empieza a acelerar: suma hasta 10 puntos extra a la nota técnica si pasó hace menos de 30 días.",
   };
   const regla = (k, bien, mal) => {
     const nota = n[k] ?? 0;
@@ -920,6 +921,9 @@ function motivos(d) {
   regla("RSI en zona", rsi != null && `RSI ${num(rsi)}: zona sana, ni sobrecomprada ni sobrevendida`,
     rsi == null ? null : rsi > 60 ? `RSI ${num(rsi)}: sobrecomprada, puede corregir` : `RSI ${num(rsi)}: débil o sobrevendida`);
   regla("Volumen en alza", "Volumen en aumento: hay interés comprador", "Volumen en baja: poco interés");
+  const dc = d["Días desde cruce"];
+  if (dc != null && dc <= 30) f.push([dc === 0 ? "🔥 Cruce alcista hoy: la media de 50 pasó arriba de la de 200"
+    : `🔥 Cruce alcista hace ${dc} día${dc === 1 ? "" : "s"}: recién empieza a acelerar`, EXPLICA["Cruce reciente"]]);
 
   const nf = d["Nota fund"], nt = d["Nota tec"];
   const res = `Sacó ${Math.round(d.Puntaje)} porque tiene fundamentales ${califica(nf, true)} (${nf}) y un gráfico ${califica(nt, false)} (${nt}).`;
