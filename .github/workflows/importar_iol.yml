@@ -1,0 +1,26 @@
+name: Importar IOL
+
+on:
+  schedule:
+    - cron: "0 21 * * 1-5"   # 18:00 hora argentina, después del cierre
+  workflow_dispatch:
+
+jobs:
+  importar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar librerías
+        run: pip install requests
+      - name: Importar operaciones
+        env:
+          SUPABASE_URL: https://iyejwbchituodjjeailw.supabase.co
+          SUPABASE_SECRET: ${{ secrets.SUPABASE_SECRET }}
+          IOL_USUARIO: ${{ secrets.IOL_USUARIO }}
+          IOL_CLAVE: ${{ secrets.IOL_CLAVE }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        run: python importar_iol.py
