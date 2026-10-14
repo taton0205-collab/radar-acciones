@@ -2,11 +2,15 @@ name: Actualizar ranking
 
 on:
   schedule:
-    - cron: "30 21 * * 1-5"
+    - cron: "17 21 * * 1-5"
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: guardar-cambios
+  cancel-in-progress: false
 
 jobs:
   actualizar:
@@ -29,6 +33,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data.json
           git commit -m "Ranking actualizado" || echo "Sin cambios"
+          git pull --rebase
           git push
           git add data.json
           git commit -m "Ranking actualizado" || echo "Sin cambios"
