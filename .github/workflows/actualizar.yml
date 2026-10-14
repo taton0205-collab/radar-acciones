@@ -20,11 +20,16 @@ jobs:
       - name: Instalar librerías
         run: pip install yfinance pandas requests lxml
       - name: Correr el bot
+        env:
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
         run: python bot_acciones.py
       - name: Guardar resultados
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data.json
+          git commit -m "Ranking actualizado" || echo "Sin cambios"
+          git push
           git add data.json
           git commit -m "Ranking actualizado" || echo "Sin cambios"
           git push
