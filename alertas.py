@@ -484,13 +484,46 @@ def avisos_nota(posiciones, historial):
     return avisos
 
 
+def chequeo_salud(precios, datos_radar, ahora):
+    """Problemas del bot para avisarle al admin: (clave, texto)."""
+    problemas = []
+    habil = ahora.weekday() < 5
+    def fecha_de(txt):
+        try:
+            return datetime.strptime(txt, "%d/%m/%Y %H:%M")
+        except Exception:
+            return None
+    # Precios: con la bolsa abierta tienen que actualizarse cada 30 min
+    fp = fecha_de(precios.get("actualizado", ""))
+    if habil and (12, 0) <= (ahora.hour, ahora.minute) <= (17, 30):
+        horas = (ahora.replace(tzinfo=None) - fp).total_seconds() / 3600 if fp else 99
+        if horas > 2.5:
+            problemas.append((f"salud|precios|{ahora:%Y-%m-%d}",
+                              f"🚨 <b>Los precios no se actualizan</b> desde {precios.get('actualizado') or 'hace mucho'}.\n"
+                              f"Revisá en GitHub → Actions → <b>Precios CEDEARs</b> si hay una ❌."))
+    # Ranking: corre a las 18:30 los días hábiles
+    fr = fecha_de(datos_radar.get("actualizado", ""))
+    if habil and (ahora.hour, ahora.minute) >= (20, 0):
+        if not fr or fr.date() != ahora.date():
+            problemas.append((f"salud|ranking|{ahora:%Y-%m-%d}",
+                              f"🚨 <b>El ranking de hoy no se actualizó</b> (último: {datos_radar.get('actualizado') or 'nunca'}).\n"
+                              f"Revisá en GitHub → Actions → <b>Actualizar ranking</b> si hay una ❌."))
+    # IA de noticias
+    ns = [n for v in precios.get("tickers", {}).values() for n in (v.get("noticias") or [])]
+    if habil and len(ns) >= 10 and not any(n.get("sentimiento") for n in ns) and ahora.hour >= 12:
+        problemas.append((f"salud|ia|{ahora:%Y-%m-%d}",
+                          "🚨 <b>La IA no está calificando las noticias.</b>\n"
+                          "Puede ser la clave GEMINI_KEY o el límite del plan gratis. Revisá el log de <b>Precios CEDEARs</b> (buscá «IA»)."))
+    return problemas
+
+
 # ----------------------------- principal -----------------------------
 
 def main():
     if not (SUPABASE_URL and SUPABASE_SECRET and TOKEN):
         raise SystemExit("Faltan secretos: SUPABASE_SECRET y/o TELEGRAM_TOKEN.")
 
-    perfiles = sb_get("perfiles", "select=id,email,nombre,aprobado,telegram_chat_id,telegram_codigo,aviso_movimiento")
+    perfiles = sb_get("perfiles", "select=id,email,nombre,aprobado,es_admin,telegram_chat_id,telegram_codigo,aviso_movimiento")
     procesar_mensajes(perfiles)
 
     usuarios = [p for p in perfiles if p.get("aprobado") and p.get("telegram_chat_id")]
@@ -550,6 +583,14 @@ def main():
             mis_ops = [o for o in ops if o["usuario"] == uid]
             if enviar(chat, resumen_semanal(nombre, posiciones, mis_ops, precios, ranking)):
                 nuevos.append({"usuario": uid, "clave": clave_sem})
+
+    # Salud del bot: solo le avisa al admin
+    for u in usuarios:
+        if u.get("es_admin"):
+            for clave, texto in chequeo_salud(precios, datos_radar, ahora):
+                if (u["id"], clave) not in ya and enviar(u["telegram_chat_id"], texto):
+                    nuevos.append({"usuario": u["id"], "clave": clave})
+                    ya.add((u["id"], clave))
 
     sb_insert_ignorar("avisos_enviados", nuevos)
     if not usuarios:
