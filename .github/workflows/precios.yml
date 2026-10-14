@@ -2,7 +2,7 @@ name: Precios CEDEARs
 
 on:
   schedule:
-    - cron: "*/30 13-20 * * 1-5"
+      - cron: "7,37 13-20 * * 1-5"
   workflow_dispatch:
 
 permissions:
