@@ -103,6 +103,8 @@
     color: var(--text); text-decoration: none; font-size: 14px; line-height: 1.35;
   }
   .cnews a:last-child { border-bottom: 0; }
+  .cnews .cn { border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 4px; }
+  .cnews .cn:last-child { border-bottom: 0; }
   .cnews small { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
   .why { background: var(--bg); border-radius: 10px; padding: 12px; margin-bottom: 12px; font-size: 14px; line-height: 1.4; }
   .why .res { font-weight: 600; margin-bottom: 8px; }
@@ -145,7 +147,16 @@
   }
   .nitem .top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: var(--muted); }
   .badge { background: var(--accent-soft); color: var(--accent); font-weight: 700; padding: 2px 8px; border-radius: 6px; font-size: 12px; }
-  .nitem .t { font-size: 15px; font-weight: 500; }
+  .nitem .t { font-size: 15px; font-weight: 500; color: var(--text); text-decoration: none; display: block; }
+  .ia { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; }
+  .sent { font-weight: 700; padding: 2px 8px; border-radius: 6px; }
+  .sent.buena { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  .sent.mala { background: color-mix(in srgb, var(--low) 16%, transparent); color: var(--low); }
+  .sent.neutra { background: var(--chip); color: var(--muted); }
+  .imp { color: var(--muted); }
+  .explicame { margin-left: auto; border: 0; background: var(--chip); color: var(--text); font: inherit; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 8px; cursor: pointer; }
+  .expl { display: none; margin-top: 8px; padding: 10px; border-radius: 8px; background: var(--chip); font-size: 13px; line-height: 1.45; }
+  .expl.on { display: block; }
   .pcard { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 8px; }
   .resumen { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0 12px; }
   .resumen .kv { background: var(--card); border: 1px solid var(--line); }
@@ -321,21 +332,50 @@ function hace(fecha) {
 
 let filtroNoticias = "Todas";
 
+let cargandoMias = false;
+async function cargarMias() {
+  if (cargandoMias || !sesion || !perfil?.aprobado) return;
+  cargandoMias = true;
+  const [r1, r2] = await Promise.all([
+    ops.length ? null : sb.from("operaciones").select("*").order("fecha"),
+    seguidas.length ? null : sb.from("seguimiento").select("*"),
+    precios ? null : cargarPrecios(),
+  ]);
+  if (r1?.data) ops = r1.data;
+  if (r2?.data) seguidas = r2.data;
+  renderNoticias();
+}
+
 function renderNoticias() {
-  const conNoticias = datos.filter((d) => d.Noticias && d.Noticias.length);
-  const opciones = ["Todas", ...conNoticias.map((d) => d.Ticker)];
-  $("nchips").innerHTML = opciones.map((t) => `<button class="chip${t === filtroNoticias ? " on" : ""}" data-n="${esc(t)}">${esc(t)}</button>`).join("");
+  if (sesion && (!precios || (!ops.length && !seguidas.length)) && !cargandoMias) cargarMias();
+  // Tus acciones (cartera + seguimiento)
+  const cant = {};
+  for (const o of ops) cant[o.ticker] = (cant[o.ticker] || 0) + (o.tipo === "compra" ? +o.cantidad : -o.cantidad);
+  const mias = new Set([...Object.keys(cant).filter((t) => cant[t] > 1e-9), ...seguidas.map((x) => x.ticker)]);
+  // Juntar noticias: ranking (top 40) + las de tus acciones (precios.json)
+  const porTicker = {};
+  const sumar = (t, lista) => {
+    const arr = porTicker[t] ||= [];
+    for (const n of lista || []) if (n.url && !arr.some((x) => x.url === n.url || x.titulo === n.titulo)) arr.push(n);
+  };
+  datos.forEach((d) => sumar(d.Ticker, d.Noticias));
+  mias.forEach((t) => sumar(t, precios?.tickers?.[t]?.noticias));
+  const conNoticias = Object.keys(porTicker).filter((t) => porTicker[t].length);
+  const miasCon = conNoticias.filter((t) => mias.has(t)).sort();
+  const opciones = ["Todas", ...(miasCon.length ? ["⭐ Mis acciones"] : []), ...miasCon, ...conNoticias.filter((t) => !mias.has(t))];
+  if (!opciones.includes(filtroNoticias)) filtroNoticias = "Todas";
+  $("nchips").innerHTML = opciones.map((t) => `<button class="chip${t === filtroNoticias ? " on" : ""}" data-n="${esc(t)}">${mias.has(t) ? "⭐ " : ""}${esc(t)}</button>`).join("");
   let items = [];
-  conNoticias.forEach((d) => {
-    if (filtroNoticias === "Todas" || filtroNoticias === d.Ticker)
-      d.Noticias.forEach((n) => items.push({ ...n, ticker: d.Ticker }));
+  conNoticias.forEach((t) => {
+    const ok = filtroNoticias === "Todas" || filtroNoticias === t || (filtroNoticias === "⭐ Mis acciones" && mias.has(t));
+    if (ok) porTicker[t].forEach((n) => items.push({ ...n, ticker: t }));
   });
   items.sort((a, b) => (Date.parse(b.fecha) || 0) - (Date.parse(a.fecha) || 0));
   $("feed").innerHTML = items.length
-    ? items.map((n) => `<a class="nitem" href="${esc(n.url)}" target="_blank" rel="noopener">
-        <div class="top"><span class="badge">${esc(n.ticker)}</span>${esc(n.fuente)}${n.fuente && hace(n.fecha) ? " · " : ""}${hace(n.fecha)}</div>
-        <div class="t">${esc(n.titulo)}</div></a>`).join("")
-    : `<div class="empty">No hay noticias todavía.</div>`;
+    ? items.slice(0, 150).map((n) => `<div class="nitem">
+        <div class="top"><span class="badge">${mias.has(n.ticker) ? "⭐ " : ""}${esc(n.ticker)}</span>${esc(n.fuente)}${n.fuente && hace(n.fecha) ? " · " : ""}${hace(n.fecha)}</div>
+        <a class="t" href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.titulo)}</a>${iaNoticia(n)}</div>`).join("")
+    : `<div class="empty">Todavía no hay noticias. Se actualizan con el ranking (18:30) y con los precios (cada 30 min).</div>`;
 }
 
 function irA(vista) {
@@ -975,10 +1015,26 @@ if (sb) {
 
 let pestanas = {};  // ticker -> "a" (análisis) o "n" (noticias)
 
+function iaNoticia(n) {
+  if (!n.sentimiento) return "";
+  const etq = { buena: "🟢 Buena", mala: "🔴 Mala", neutra: "⚪ Neutra" }[n.sentimiento];
+  return `<div class="ia"><span class="sent ${n.sentimiento}">${etq}</span><span class="imp">impacto ${esc(n.impacto)}</span>
+    ${n.explicacion ? `<button class="explicame" type="button">🤖 Explicame</button>` : ""}</div>
+    ${n.explicacion ? `<div class="expl">🤖 ${esc(n.explicacion)}</div>` : ""}`;
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest(".explicame");
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const box = b.parentElement.nextElementSibling;
+  const on = box.classList.toggle("on");
+  b.textContent = on ? "Cerrar" : "🤖 Explicame";
+}, true);
+
 function noticiasEmpresa(d) {
   if (!d.Noticias) return `<div class="none">Hay noticias solo para las primeras del ranking.</div>`;
   if (!d.Noticias.length) return `<div class="none">Sin noticias recientes.</div>`;
-  return d.Noticias.map((n) => `<a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.titulo)}<small>${esc(n.fuente)}${n.fuente && hace(n.fecha) ? " · " : ""}${hace(n.fecha)}</small></a>`).join("");
+  return d.Noticias.map((n) => `<div class="cn"><a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.titulo)}<small>${esc(n.fuente)}${n.fuente && hace(n.fecha) ? " · " : ""}${hace(n.fecha)}</small></a>${iaNoticia(n)}</div>`).join("");
 }
 
 const num = (v) => (Math.round(v * 10) / 10).toLocaleString("es-AR");

@@ -313,7 +313,8 @@ def resumen_usuario(nombre, posiciones, seguidas, precios, ranking):
         lineas.append("\n📰 <b>Noticias de tus acciones</b>")
         for t, n in noticias[:MAX_NOTICIAS_RESUMEN]:
             titulo = n["titulo"].replace("<", "").replace(">", "")
-            lineas.append(f"• <b>{t}</b>: <a href=\"{n['url']}\">{titulo}</a>")
+            ic = {"buena": "🟢 ", "mala": "🔴 ", "neutra": "⚪ "}.get(n.get("sentimiento"), "")
+            lineas.append(f"• {ic}<b>{t}</b>: <a href=\"{n['url']}\">{titulo}</a>")
 
     # Próximos balances
     prox = []
@@ -434,6 +435,25 @@ def resumen_semanal(nombre, posiciones, ops_usuario, precios, ranking):
     return "\n".join(lineas)
 
 
+def avisos_noticias(posiciones, seguidas, precios):
+    """Noticias de IMPACTO GRANDE (muy buenas o muy malas) de tus acciones, según la IA."""
+    import hashlib
+    avisos = []
+    tickers = sorted({p["ticker"] for p in posiciones} | {s["ticker"] for s in seguidas})
+    for t in tickers:
+        for n in precios.get("tickers", {}).get(t, {}).get("noticias", []):
+            if n.get("impacto") != "grande" or n.get("sentimiento") not in ("buena", "mala"):
+                continue
+            buena = n["sentimiento"] == "buena"
+            titulo = n["titulo"].replace("<", "").replace(">", "")
+            expl = (n.get("explicacion") or "").replace("<", "").replace(">", "")
+            clave = f"{t}|noticia|{hashlib.md5(n['url'].encode()).hexdigest()[:12]}"
+            avisos.append((clave,
+                           f"{'🟢' if buena else '🔴'} <b>Noticia muy {'buena' if buena else 'mala'} de {t}</b>\n"
+                           f"<a href=\"{n['url']}\">{titulo}</a>\n\n🤖 <b>Qué significa:</b> {expl}"))
+    return avisos
+
+
 def avisos_nota(posiciones, historial):
     """Avisa si una acción que tenés bajó mucho en el radar (o se cayó del ranking)."""
     fechas = sorted(historial)
@@ -515,7 +535,7 @@ def main():
                     nuevos.append({"usuario": uid, "clave": clave})
                     ya.add((uid, clave))
 
-        for clave, texto in avisos_nota(posiciones, historial_radar):
+        for clave, texto in avisos_nota(posiciones, historial_radar) + avisos_noticias(posiciones, seguidas, precios):
             if (uid, clave) not in ya and enviar(chat, texto):
                 nuevos.append({"usuario": uid, "clave": clave})
                 ya.add((uid, clave))

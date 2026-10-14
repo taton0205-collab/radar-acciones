@@ -145,6 +145,74 @@ def proximo_balance(ticker):
         return None
 
 
+# ----------------------------- noticias (Google Noticias) -----------------------------
+import re as _re
+import xml.etree.ElementTree as _ET
+from email.utils import parsedate_to_datetime as _parse_fecha
+
+_SUFIJOS = r"\b(inc|corp|corporation|co|company|ltd|plc|sa|s\.a\.|n\.v\.|nv|holdings?|group|class [abc]|the|incorporated|limited|trust|series \d+|etf)\b\.?"
+
+
+_FINANZAS = (r"acci[oó]n|stock|shares|bolsa|cotiza|ganancia|beneficio|resultado|balance|trimestr|quarter|earnings|"
+             r"analista|analyst|precio objetivo|price target|dividend|inversor|investor|mercado|market|wall street|"
+             r"ventas|revenue|sube|suben|cae|caen|baja|bajan|rally|compra|venta|upgrade|downgrade|%|\$|us\$|u\$s|etf|nasdaq|nyse|merval|byma")
+
+
+def nombre_corto(empresa, ticker):
+    """'Walmart Inc.' -> 'Walmart' · 'Alphabet Inc. Class A' -> 'Alphabet'"""
+    n = _re.sub(r"\bS\.?A\.?(?=\s|$)|\bN\.?V\.?(?=\s|$)|\bS\.?A\.?B\.?", " ", (empresa or "").replace(",", " "))
+    n = _re.sub(_SUFIJOS, "", n, flags=_re.I)
+    n = _re.sub(r"[^\w&' .-]", " ", n)
+    genericas = {"grupo", "financiero", "financial", "sociedad", "anonima", "anónima", "compania", "compañía",
+                 "spdr", "state", "street", "ishares", "invesco", "vaneck", "global", "international", "de", "y"}
+    palabras = [w for w in n.split() if w.lower() not in genericas]
+    n = " ".join(palabras[:2]).strip(" .-")
+    return n if len(n) >= 3 else ticker
+
+
+def noticias_google(ticker, empresa="", maximo=5, dias=7):
+    """Noticias en español (y si no hay, en inglés) de Google Noticias, filtradas por la empresa."""
+    es_etf = not empresa or "etf" in empresa.lower() or "trust" in empresa.lower()
+    nombre = ticker if es_etf else nombre_corto(empresa, ticker)
+    claves = {nombre.lower()} | ({ticker.lower()} if len(ticker) >= 3 else set()) | ({nombre.split()[0].lower()} if len(nombre.split()) > 1 and len(nombre.split()[0]) >= 5 else set())
+    salida, vistos = [], set()
+    extra = "ETF" if es_etf else "acciones"
+    for consulta, idioma in ((f'"{nombre}" {extra}', ("es-419", "AR", "AR:es-419")),
+                             (f'"{nombre}" {"ETF" if es_etf else "stock"}', ("en-US", "US", "US:en")),
+                             (f'"{ticker}" acciones', ("es-419", "AR", "AR:es-419"))):
+        try:
+            r = requests.get("https://news.google.com/rss/search", timeout=20,
+                             params={"q": f"{consulta} when:{dias}d", "hl": idioma[0], "gl": idioma[1], "ceid": idioma[2]},
+                             headers={"User-Agent": "Mozilla/5.0"})
+            items = _ET.fromstring(r.content).iter("item") if r.status_code == 200 else []
+        except Exception:
+            items = []
+        encontrados = []
+        for it in items:
+            titulo, fuente = it.findtext("title") or "", it.findtext("source") or ""
+            if fuente and titulo.endswith(" - " + fuente):
+                titulo = titulo[: -len(fuente) - 3]
+            t_low = titulo.lower()
+            if not any(_re.search(r"\b" + _re.escape(c) + r"\b", t_low) for c in claves):
+                continue   # no habla de esta empresa
+            if ticker.lower() not in t_low and not _re.search(_FINANZAS, t_low):
+                continue   # menciona el nombre pero no parece una noticia de mercado
+            clave = _re.sub(r"\W+", "", t_low)[:30]
+            if clave in vistos:
+                continue
+            vistos.add(clave)
+            try:
+                fecha = _parse_fecha(it.findtext("pubDate")).isoformat()
+            except Exception:
+                fecha = ""
+            encontrados.append({"titulo": titulo, "url": it.findtext("link"), "fuente": fuente, "fecha": fecha})
+        encontrados.sort(key=lambda n: n["fecha"], reverse=True)
+        salida += encontrados[: maximo - len(salida)]
+        if len(salida) >= maximo:
+            break
+    return salida
+
+
 def noticias_recientes(ticker, horas=30, maximo=3):
     """Últimas noticias de la empresa (de las últimas `horas`)."""
     salida = []
@@ -168,6 +236,14 @@ def noticias_recientes(ticker, horas=30, maximo=3):
                 break
     except Exception:
         pass
+    if not salida:
+        empresa = ""
+        try:
+            empresa = yf.Ticker(ticker).info.get("shortName", "")
+        except Exception:
+            pass
+        limite_txt = (datetime.now(timezone.utc) - timedelta(hours=horas)).isoformat()
+        salida = [n for n in noticias_google(ticker, empresa, maximo, dias=2) if not n["fecha"] or n["fecha"] >= limite_txt]
     return salida
 
 
@@ -283,6 +359,14 @@ def main():
             "balance": proximo_balance(t),
             "noticias": noticias_recientes(t),
         }
+
+    # IA: buena/mala, impacto y explicación (reusa lo ya analizado)
+    try:
+        import noticias_ia
+        cache = noticias_ia.cache_de([n for v in viejo.values() for n in (v.get("noticias") or [])])
+        noticias_ia.analizar([(t, n) for t, v in salida.items() for n in v["noticias"]], cache)
+    except Exception as e:
+        print(f"IA: no se pudo analizar ({e})")
 
     datos = {
         "actualizado": ahora_arg().strftime("%d/%m/%Y %H:%M"),
