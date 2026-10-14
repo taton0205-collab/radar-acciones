@@ -14,12 +14,43 @@ import time
 import requests
 
 GEMINI_KEY = os.environ.get("GEMINI_KEY", "").strip()
-MODELOS = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
+MODELOS = ["gemini-flash-lite-latest", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"]
 POR_LOTE = 20          # noticias por consulta
 MAX_POR_CORRIDA = 160  # tope para no pasarse del plan gratis
 PAUSA = 5              # segundos entre consultas
 
 CAMPOS = ("sentimiento", "impacto", "explicacion")
+
+# Formato obligatorio de la respuesta (así la IA no puede contestar cualquier cosa)
+ESQUEMA = {
+    "type": "ARRAY",
+    "items": {
+        "type": "OBJECT",
+        "properties": {
+            "id": {"type": "INTEGER"},
+            "sentimiento": {"type": "STRING", "enum": ["buena", "mala", "neutra"]},
+            "impacto": {"type": "STRING", "enum": ["chico", "mediano", "grande"]},
+            "explicacion": {"type": "STRING"},
+        },
+        "required": ["id", "sentimiento", "impacto", "explicacion"],
+    },
+}
+
+_SINONIMOS = {"positiva": "buena", "positivo": "buena", "bueno": "buena", "negativa": "mala", "negativo": "mala",
+              "malo": "mala", "neutral": "neutra", "neutro": "neutra", "medio": "mediano", "media": "mediano",
+              "moderado": "mediano", "bajo": "chico", "baja": "chico", "pequeño": "chico", "alto": "grande", "alta": "grande"}
+
+
+def _normalizar(a):
+    if not isinstance(a, dict):
+        return a
+    a = {str(k).lower().strip(): v for k, v in a.items()}
+    a.setdefault("explicacion", a.get("explicación"))
+    for k in ("sentimiento", "impacto"):
+        if isinstance(a.get(k), str):
+            v = a[k].lower().strip()
+            a[k] = _SINONIMOS.get(v, v)
+    return a
 
 PROMPT = """Sos un analista financiero que le explica noticias a un inversor argentino que recién empieza.
 Para cada noticia de la lista decidí:
@@ -44,13 +75,15 @@ def _consultar(texto):
                 f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent",
                 headers={"x-goog-api-key": GEMINI_KEY, "Content-Type": "application/json"},
                 json={"contents": [{"parts": [{"text": texto}]}],
-                      "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2}},
+                      "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2,
+                                           "responseSchema": ESQUEMA}},
                 timeout=90)
         except Exception as e:
             print(f"  IA: error de conexión ({e})")
             continue
         if r.status_code == 404:
-            continue   # ese modelo no existe más, pruebo el siguiente
+            print(f"  IA: el modelo {modelo} no está disponible, pruebo otro")
+            continue
         if r.status_code == 429:
             print("  IA: límite del plan gratis alcanzado, sigo en la próxima corrida")
             return None
@@ -61,8 +94,9 @@ def _consultar(texto):
             txt = r.json()["candidates"][0]["content"]["parts"][0]["text"]
             return json.loads(txt)
         except Exception as e:
-            print(f"  IA: no pude leer la respuesta ({e})")
+            print(f"  IA: no pude leer la respuesta ({e}): {r.text[:300]}")
             return None
+    print("  IA: ningún modelo respondió")
     return None
 
 
@@ -96,11 +130,16 @@ def analizar(items, cache):
         res = _consultar(PROMPT + lista)
         if res is None:
             break
+        if i == 0:
+            print(f"  IA: ejemplo de respuesta: {str(res)[:300]}")
         if isinstance(res, dict):
             res = next((v for v in res.values() if isinstance(v, list)), [])
-        for a in res if isinstance(res, list) else []:
+        res = [_normalizar(a) for a in (res if isinstance(res, list) else [])]
+        ids = [a.get("id") for a in res if isinstance(a, dict)]
+        usar_orden = len(res) == len(lote) and sorted(str(x) for x in ids) != sorted(str(x) for x in range(len(lote)))
+        for pos, a in enumerate(res):
             try:
-                j = int(a.get("id"))
+                j = pos if usar_orden else int(a.get("id"))
             except Exception:
                 continue
             if 0 <= j < len(lote) and _valido(a):
