@@ -192,7 +192,7 @@
   .modal h2 { margin: 0 0 12px; font-size: 19px; }
   .campo { margin-bottom: 10px; }
   .campo label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-  .campo input { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+  .campo input, .campo select, .campo textarea { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
   .campo small { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
   .fila2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .acciones { display: flex; gap: 8px; margin-top: 14px; }
@@ -513,7 +513,11 @@ async function renderCuenta() {
 
 // ================= MI CARTERA =================
 const SUG_VENTA = 25, SUG_STOP = 10;   // % sugeridos sobre el PPC
-let precios = null, ops = [], objs = {}, posiciones = [], seguidas = [];
+let precios = null, ops = [], objs = {}, posiciones = [], seguidas = [], notas = {};
+const BROKERS = ["IOL", "Balanz", "Cocos", "Bull Market", "PPI", "Allaria", "Otro"];
+let ultimoBroker = "";
+try { ultimoBroker = localStorage.getItem("ultimoBroker") || ""; } catch {}
+const selBroker = (id, valor) => `<select id="${id}"><option value="">— Elegí —</option>${BROKERS.map((b) => `<option${b === valor ? " selected" : ""}>${b}</option>`).join("")}</select>`;
 
 const ars = (v, dec) => v == null ? "–" : "$ " + Number(v).toLocaleString("es-AR", { minimumFractionDigits: dec ?? (Math.abs(v) >= 1000 ? 0 : 2), maximumFractionDigits: dec ?? (Math.abs(v) >= 1000 ? 0 : 2) });
 const pctTxt = (v) => v == null ? "–" : (v >= 0 ? "+" : "") + num(v) + "%";
@@ -671,6 +675,28 @@ document.addEventListener("click", (e) => {
   $("grafCartera").outerHTML = graficoCartera();
 });
 
+// ---------- Cuánto tenés en cada broker ----------
+function porBroker(abiertas) {
+  const tot = {};
+  for (const p of abiertas) {
+    if (p.precio == null) continue;
+    const cant = {};
+    for (const o of p.movs) {
+      const b = o.broker || "Sin especificar";
+      cant[b] = (cant[b] || 0) + (o.tipo === "compra" ? +o.cantidad : -o.cantidad);
+    }
+    for (const b in cant) if (cant[b] > 1e-9) tot[b] = (tot[b] || 0) + cant[b] * p.precio;
+  }
+  const lista = Object.entries(tot).sort((a, b) => b[1] - a[1]);
+  if (!lista.length || (lista.length === 1 && lista[0][0] === "Sin especificar")) return "";
+  const total = lista.reduce((s, x) => s + x[1], 0);
+  return `<div class="hist" style="margin-bottom:12px">
+    <div class="top"><span>🏦 Cuánto tenés en cada broker</span></div>
+    ${lista.map(([b, v]) => `<div class="crit"><span>${esc(b)}</span><div class="track"><div class="fill" style="width:${(v / total * 100).toFixed(1)}%;background:${b === "Sin especificar" ? "var(--muted)" : "var(--accent)"}"></div></div><span class="n">${Math.round(v / total * 100)}%</span></div>
+      <div style="font-size:12px;color:var(--muted);margin:-2px 0 6px">${ars(v)}</div>`).join("")}
+  </div>`;
+}
+
 // ---------- Distribución: cuánto pesa cada acción en tu cartera ----------
 const MAX_PESO = 25;   // % máximo recomendado por acción
 function distribucion(abiertas) {
@@ -695,12 +721,14 @@ function distribucion(abiertas) {
 
 async function renderMiCartera() {
   const box = $("carteraBox");
-  const [r1, r2, r3] = await Promise.all([
+  const [r1, r2, r3, , r4] = await Promise.all([
     sb.from("operaciones").select("*").order("fecha"),
     sb.from("objetivos").select("*"),
     sb.from("seguimiento").select("*").order("creado"),
     cargarPrecios(),
+    sb.from("notas_accion").select("*"),
   ]);
+  notas = Object.fromEntries((r4?.data || []).map((n) => [n.ticker, n.texto]));
   seguidas = r3?.data || [];
   if (r1.error) { box.innerHTML = `<div class="msg">Error: ${esc(r1.error.message)}</div>`; return; }
   ops = r1.data || [];
@@ -733,6 +761,7 @@ async function renderMiCartera() {
     </div>`;
   html += graficoCartera();
   html += distribucion(abiertas);
+  html += porBroker(abiertas);
   if (precios?.ccl) html += `<div class="sub" style="margin:-4px 0 10px">Dólar CCL: <b>${ars(precios.ccl, 2)}</b> · precios ${esc(precios.actualizado || "")}</div>`;
 
   html += abiertas.map(tarjetaPos).join("");
@@ -829,9 +858,11 @@ function tarjetaPos(p) {
     ${balanceTxt(p.ticker) ? `<div class="split">${balanceTxt(p.ticker)}</div>` : ""}
     ${barraPos(p)}
     ${estadoPos(p)}`}
+    ${notas[p.ticker] ? `<div class="split" style="white-space:pre-wrap">🗒️ ${esc(notas[p.ticker])}</div>` : ""}
     <div class="mini-acc">
       <button data-obj="${esc(p.ticker)}">🎯 Objetivos</button>
       <button data-movs="${esc(p.ticker)}">📋 Movimientos</button>
+      <button data-nota="${esc(p.ticker)}">🗒️ Notas</button>
     </div>
   </div>`;
 }
@@ -871,6 +902,7 @@ function conectarBotones() {
   $("btnVenta").onclick = () => formOperacion("venta");
   $("carteraBox").querySelectorAll("[data-obj]").forEach((b) => b.onclick = () => formObjetivos(b.dataset.obj));
   $("carteraBox").querySelectorAll("[data-movs]").forEach((b) => b.onclick = () => verMovimientos(b.dataset.movs));
+  $("carteraBox").querySelectorAll("[data-nota]").forEach((b) => b.onclick = () => formNota(b.dataset.nota));
 }
 
 // ---------- Ventanas (modales) ----------
@@ -893,6 +925,9 @@ function formOperacion(tipo, ticker = "") {
       <div class="campo"><label>Comisión total ($)</label><input id="fCom" type="number" inputmode="decimal" min="0" step="any" value="0"></div>
     </div>
     <div class="campo"><small id="fTotal">Total: –</small></div>
+    <div class="campo"><label>Broker</label>${selBroker("fBroker", ultimoBroker)}</div>
+    <div class="campo"><label>📝 ¿Por qué ${tipo === "compra" ? "comprás" : "vendés"}? (opcional)</label>
+      <textarea id="fNota" rows="2" maxlength="500" placeholder="${tipo === "compra" ? "Ej: buen balance, nota 85 en el radar" : "Ej: llegó a mi objetivo"}"></textarea></div>
     <div id="fMsg" class="estado" style="display:none"></div>
     <div class="acciones"><button id="fCancelar">Cancelar</button><button class="pri" id="fGuardar">Guardar</button></div>`);
   const total = () => {
@@ -903,7 +938,9 @@ function formOperacion(tipo, ticker = "") {
   $("fCancelar").onclick = cerrarModal;
   $("fGuardar").onclick = async () => {
     const fila = { ticker: $("fTicker").value.trim().toUpperCase(), tipo, fecha: $("fFecha").value,
-      cantidad: +$("fCant").value, precio: +$("fPrecio").value, comision: +$("fCom").value || 0 };
+      cantidad: +$("fCant").value, precio: +$("fPrecio").value, comision: +$("fCom").value || 0,
+      broker: $("fBroker").value || null, nota: $("fNota").value.trim() || null };
+    if (fila.broker) { ultimoBroker = fila.broker; try { localStorage.setItem("ultimoBroker", fila.broker); } catch {} }
     const err = (t) => { $("fMsg").textContent = t; $("fMsg").className = "estado bad"; $("fMsg").style.display = "block"; };
     if (!/^[A-Z0-9.\-]{1,10}$/.test(fila.ticker)) return err("Escribí un ticker válido (ej: WDC).");
     if (!(fila.cantidad > 0)) return err("La cantidad tiene que ser mayor a 0.");
@@ -969,17 +1006,48 @@ function verMovimientos(ticker) {
   const movs = [...p.movs].reverse();
   abrirModal(`<h2>Movimientos · ${esc(ticker)}</h2>
     ${movs.map((o) => `<div class="mov"><span><b class="${o.tipo === "compra" ? "up" : "down"}">${o.tipo === "compra" ? "Compra" : "Venta"}</b> · ${num(+o.cantidad)} a ${ars(+o.precio)}
-        <small>${o.fecha.split("-").reverse().join("/")}${+o.comision ? ` · comisión ${ars(+o.comision)}` : ""}</small></span>
-        <button data-del="${o.id}" title="Borrar">🗑️</button></div>`).join("")}
+        <small>${o.fecha.split("-").reverse().join("/")}${+o.comision ? ` · comisión ${ars(+o.comision)}` : ""}${o.broker ? ` · 🏦 ${esc(o.broker)}` : ""}</small>
+        ${o.nota ? `<small style="white-space:pre-wrap">📝 ${esc(o.nota)}</small>` : ""}</span>
+        <span style="display:flex;gap:4px"><button data-edit="${o.id}" title="Editar nota y broker">✏️</button><button data-del="${o.id}" title="Borrar">🗑️</button></span></div>`).join("")}
     <div class="acciones"><button id="mCerrar">Cerrar</button><button class="pri" id="mCompra">+ Otra compra</button></div>`);
   $("mCerrar").onclick = cerrarModal;
   $("mCompra").onclick = () => formOperacion("compra", ticker);
+  $("hoja").querySelectorAll("[data-edit]").forEach((b) => b.onclick = () => formEditarMov(movs.find((o) => o.id === +b.dataset.edit), ticker));
   $("hoja").querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
     if (!confirm("¿Borrar este movimiento?")) return;
     await sb.from("operaciones").delete().eq("id", +b.dataset.del);
     await renderMiCartera();
     if (posiciones.find((x) => x.ticker === ticker)) verMovimientos(ticker); else cerrarModal();
   });
+}
+
+function formEditarMov(o, ticker) {
+  abrirModal(`<h2>${o.tipo === "compra" ? "Compra" : "Venta"} · ${esc(ticker)}</h2>
+    <div class="sub" style="margin-bottom:12px">${num(+o.cantidad)} a ${ars(+o.precio)} · ${o.fecha.split("-").reverse().join("/")}</div>
+    <div class="campo"><label>Broker</label>${selBroker("eBroker", o.broker || "")}</div>
+    <div class="campo"><label>📝 Nota</label><textarea id="eNota" rows="3" maxlength="500" placeholder="¿Por qué hiciste esta operación?">${esc(o.nota || "")}</textarea></div>
+    <div class="acciones"><button id="eVolver">Volver</button><button class="pri" id="eGuardar">Guardar</button></div>`);
+  $("eVolver").onclick = () => verMovimientos(ticker);
+  $("eGuardar").onclick = async () => {
+    const { error } = await sb.from("operaciones").update({ broker: $("eBroker").value || null, nota: $("eNota").value.trim() || null }).eq("id", o.id);
+    if (error) return alert("No se pudo guardar: " + error.message);
+    await renderMiCartera(); verMovimientos(ticker);
+  };
+}
+
+function formNota(ticker) {
+  abrirModal(`<h2>🗒️ Notas · ${esc(ticker)}</h2>
+    <div class="campo"><textarea id="nTexto" rows="7" maxlength="2000" placeholder="Ej: vender si baja de 50 mil · esperar el balance del 22/10 · me la recomendó papá">${esc(notas[ticker] || "")}</textarea></div>
+    <div class="acciones"><button id="nCancelar">Cancelar</button><button class="pri" id="nGuardar">Guardar</button></div>`);
+  $("nCancelar").onclick = cerrarModal;
+  $("nGuardar").onclick = async () => {
+    const texto = $("nTexto").value.trim();
+    const { error } = texto
+      ? await sb.from("notas_accion").upsert({ ticker, texto, actualizado: new Date().toISOString() })
+      : await sb.from("notas_accion").delete().eq("ticker", ticker);
+    if (error) return alert("No se pudo guardar: " + error.message);
+    cerrarModal(); renderMiCartera();
+  };
 }
 
 async function renderUsuarios() {

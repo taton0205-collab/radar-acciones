@@ -111,7 +111,7 @@ def main():
         if (ticker, tipo, fecha, cantidad) in manuales:
             continue   # ya la habías cargado a mano
         nuevas.append({"usuario": admin["id"], "ticker": ticker, "tipo": tipo, "fecha": fecha,
-                       "cantidad": cantidad, "precio": precio, "comision": 0, "iol_numero": numero})
+                       "cantidad": cantidad, "precio": precio, "comision": 0, "iol_numero": numero, "broker": "IOL"})
 
     print(f"Nuevas: {len(nuevas)} · salteadas (bonos/FCI/otros): {salteadas}")
     if nuevas:
