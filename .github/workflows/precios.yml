@@ -29,12 +29,13 @@ jobs:
           SUPABASE_SECRET: ${{ secrets.SUPABASE_SECRET }}
           IOL_USUARIO: ${{ secrets.IOL_USUARIO }}
           IOL_CLAVE: ${{ secrets.IOL_CLAVE }}
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
         run: python precios.py
       - name: Guardar
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add precios.json
+                    git add precios.json
           git commit -m "Precios actualizados" || echo "Sin cambios"
           git pull --rebase
           git push
