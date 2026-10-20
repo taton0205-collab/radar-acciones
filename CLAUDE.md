@@ -39,7 +39,7 @@ URL: https://taton0205-collab.github.io/radar-acciones/
 - `alertas.yml` → `alertas.py` cada 15 min (no commitea).
 - `importar_iol.yml` → `importar_iol.py` 21:00 UTC lun-vie.
 - Los que commitean usan `concurrency: guardar-cambios` y `git pull --rebase`.
-- **GitHub atrasa/saltea los cron**: por eso hay despertadores externos en **cron-job.org** que llaman a la API `workflow_dispatch` con un token fine-grained (solo Actions read/write en este repo). Hechos: **Precios** (cada 15 min, 10-17:45 ART, lun-vie), **Avisos** (cada 15 min, todos los días) y **Ranking** (18:15 lun-vie).
+- **GitHub atrasa/saltea los cron**: por eso hay despertadores externos en **cron-job.org** que llaman a la API `workflow_dispatch` con un token fine-grained (solo Actions read/write en este repo). Hechos: **Precios** (cada 15 min, 10-17:45 ART, lun-vie), **Avisos** (cada 15 min, todos los días), **Importar IOL** (18:00 lun-vie) y **Ranking** (18:15 lun-vie).
 
 ### Secretos de GitHub (nombres)
 `SUPABASE_SECRET`, `TELEGRAM_TOKEN`, `IOL_USUARIO`, `IOL_CLAVE`, `GEMINI_KEY`.
