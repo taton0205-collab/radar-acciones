@@ -287,8 +287,8 @@ def avisos_de_usuario(posiciones, seguidas, precios, pct_mov=0, hoy=""):
 
 
 def comprables(ranking):
-    """Solo las que tienen CEDEAR en Argentina (si no se sabe, se dejan)."""
-    return [a for a in ranking if a.get("CEDEAR") is not False]
+    """Solo acciones/ETFs con CEDEAR en Argentina (si no se sabe, se dejan). Sin cripto."""
+    return [a for a in ranking if a.get("CEDEAR") is not False and a.get("Mercado") != "Cripto"]
 
 
 def resumen_usuario(nombre, posiciones, seguidas, precios, ranking):

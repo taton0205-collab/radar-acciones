@@ -35,6 +35,9 @@
   .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
   .cedear-tg { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; cursor: pointer; }
   .sin-cedear { color: var(--low); font-weight: 600; }
+  .vivo-info { font-size: 12px; color: var(--muted); line-height: 1.5; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; }
+  .vivo-precio { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .vivo-precio b { color: var(--text); }
   .controls { position: sticky; top: 0; background: var(--bg); padding: 10px 0 8px; z-index: 5; }
   .seg { display: flex; background: var(--chip); border-radius: 10px; padding: 3px; }
   .seg button {
@@ -276,6 +279,8 @@
 <script>
 const TOP_N = 15;
 let datos = [], maxSector = 3, modo = "top", sector = "Todos", busqueda = "", soloCedear = true;
+// Cripto en vivo: nota recalculada con el precio de CoinGecko cada 30 s
+let enVivo = {}, dolarCripto = null, vivoHora = null, paramsTec = { cruce_dias_max: 30, cruce_bonus: 10 };
 let abiertos = new Set();
 
 const $ = (id) => document.getElementById(id);
@@ -292,12 +297,93 @@ const NOMBRES = {
   "SMA50>SMA200": "Cruce SMA50/200", "RSI en zona": "RSI", "Volumen en alza": "Volumen", "Cruce reciente": "Cruce reciente 🔥",
 };
 const FUND = ["P/E", "ROE", "Deuda/Pat", "Crec. ingresos", "Crec. ganancias", "FCF positivo"];
-const ARG = "🇦🇷 Argentina", ETF = "📦 ETFs";
+const ARG = "🇦🇷 Argentina", ETF = "📦 ETFs", CRIPTO = "₿ Cripto";
 const TEC = ["Precio>SMA200", "SMA50>SMA200", "RSI en zona", "Volumen en alza", "Cruce reciente"];
+
+// ---------------- Cripto en vivo ----------------
+// Misma cuenta que analisis_tecnico() de bot_acciones.py: si cambiás una, cambiá la otra
+const escala = (v, malo, bueno) => (v == null || isNaN(v)) ? 0 : Math.min(Math.max((v - malo) / (bueno - malo), 0), 1);
+const notaRango = (v, lb, ib, ia, la) => (v == null || isNaN(v)) ? 0 : v < ib ? escala(v, lb, ib) : v > ia ? escala(v, la, ia) : 1;
+
+function tecnicoCripto(c, volRatio, P) {
+  const n = c.length;
+  if (n < 200) return null;
+  const acum = [0];
+  for (const x of c) acum.push(acum[acum.length - 1] + x);
+  const sma = (k, i) => (acum[i + 1] - acum[i + 1 - k]) / k;   // media de k días que termina en el día i
+  const precio = c[n - 1], sma50 = sma(50, n - 1), sma200 = sma(200, n - 1);
+  // RSI de Wilder (igual que pandas ewm(alpha=1/14, adjust=False))
+  let mu = null, md = null;
+  for (let i = 1; i < n; i++) {
+    const d = c[i] - c[i - 1], sube = Math.max(d, 0), baja = Math.max(-d, 0);
+    if (mu === null) { mu = sube; md = baja; } else { mu += (sube - mu) / 14; md += (baja - md) / 14; }
+  }
+  const rsi = 100 - 100 / (1 + mu / md);
+  const dist = (precio / sma200 - 1) * 100, distCruce = (sma50 / sma200 - 1) * 100;
+  const arriba = (i) => sma(50, i) > sma(200, i);
+  let dias = null;
+  if (arriba(n - 1)) for (let i = n - 1; i > 199; i--) if (arriba(i) !== arriba(i - 1)) { dias = n - 1 - i; break; }
+  const notas = {
+    "Precio>SMA200": notaRango(dist, -5, 3, 25, 50),
+    "SMA50>SMA200": escala(distCruce, -2, 5),
+    "RSI en zona": notaRango(rsi, 30, 45, 60, 75),
+    "Volumen en alza": escala(volRatio, 0.8, 1.3),
+    "Cruce reciente": dias != null ? escala(dias, P.cruce_dias_max, 0) : 0,
+  };
+  const base = ["Precio>SMA200", "SMA50>SMA200", "RSI en zona", "Volumen en alza"];
+  const tec = Math.min(100, base.reduce((t, k) => t + notas[k], 0) / base.length * 100 + notas["Cruce reciente"] * P.cruce_bonus);
+  return { precio, rsi, dist, dias, tec, notas };
+}
+
+async function actualizarVivo() {
+  const cr = datos.filter((d) => d.Mercado === "Cripto" && d._serie && d.CoinGecko);
+  if (!cr.length || document.hidden || sector !== CRIPTO) return;
+  try {
+    const ids = cr.map((d) => d.CoinGecko).join(",");
+    const [pg, pa] = await Promise.all([
+      fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`).then((r) => r.ok ? r.json() : null),
+      fetch("https://criptoya.com/api/usdt/ars/1").then((r) => r.ok ? r.json() : null).catch(() => null),
+    ]);
+    if (pa) {   // dólar cripto: mediana de lo que cobran los exchanges por 1 USDT
+      const v = Object.values(pa).map((x) => x && x.totalAsk).filter((x) => x > 0).sort((a, b) => a - b);
+      if (v.length) dolarCripto = v[Math.floor(v.length / 2)];
+    }
+    if (!pg) return;
+    const hoy = new Date().toISOString().slice(0, 10);   // las velas de cripto cierran en hora UTC
+    for (const d of cr) {
+      const p = pg[d.CoinGecko];
+      if (!p || !(p.usd > 0)) continue;
+      const c = d._serie.cierres.slice();
+      if (hoy > d._serie.fin) c.push(p.usd); else c[c.length - 1] = p.usd;
+      const t = tecnicoCripto(c, d._serie.vol_ratio, paramsTec);
+      if (t) enVivo[d.Ticker] = { ...t, usd: p.usd, var24: p.usd_24h_change };
+    }
+    vivoHora = new Date();
+    if (sector === CRIPTO) render();
+  } catch (e) { /* sin conexión: queda la nota del bot */ }
+}
+
+function vivo(d) {
+  const v = enVivo[d.Ticker];
+  if (d.Mercado !== "Cripto" || !v) return d;
+  const p = Math.round(v.tec * 10) / 10;
+  return { ...d, Puntaje: p, "Nota tec": Math.round(v.tec), Precio: v.usd, RSI: v.rsi, "% sobre SMA200": v.dist,
+    "Días desde cruce": v.dias, _notas: Object.fromEntries(Object.entries(v.notas).map(([k, x]) => [k, Math.round(x * 100)])),
+    Cambio: Math.round((p - d.Puntaje) * 10) / 10, Nueva: false, _vivo: v };
+}
+
+function precioTxt(v, dec) {
+  if (v == null || isNaN(v)) return "–";
+  const d = dec ?? (v >= 100 ? 0 : v >= 1 ? 2 : 4);
+  return v.toLocaleString("es-AR", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
 
 function lista() {
   // Si BYMA no respondió (CEDEAR = null) o el dato es viejo, se muestran igual
-  const base = soloCedear ? datos.filter((d) => d.CEDEAR !== false) : datos;
+  let base = sector === CRIPTO
+    ? datos.filter((d) => d.Mercado === "Cripto").map(vivo).sort((a, b) => b.Puntaje - a.Puntaje)
+    : datos.filter((d) => d.Mercado !== "Cripto" || busqueda).map(vivo);
+  if (soloCedear) base = base.filter((d) => d.CEDEAR !== false);
   let l = base.map((d, i) => ({ ...d, puesto: i + 1 }));
   if (modo === "top" && sector === "Todos" && !busqueda) {
     const cuenta = {};
@@ -308,7 +394,7 @@ function lista() {
   }
   if (sector === ARG) l = l.filter((d) => d.Mercado === "Argentina");
   else if (sector === ETF) l = l.filter((d) => d.Mercado === "ETF");
-  else if (sector !== "Todos") l = l.filter((d) => d.Sector === sector);
+  else if (sector !== "Todos" && sector !== CRIPTO) l = l.filter((d) => d.Sector === sector);
   if (busqueda) {
     const q = busqueda.toLowerCase();
     l = l.filter((d) => d.Ticker.toLowerCase().includes(q) || (d.Empresa || "").toLowerCase().includes(q));
@@ -1168,10 +1254,12 @@ function motivos(d) {
     : `🔥 Cruce alcista hace ${dc} día${dc === 1 ? "" : "s"}: recién empieza a acelerar`, EXPLICA["Cruce reciente"]]);
 
   const nf = d["Nota fund"], nt = d["Nota tec"];
-  const res = esEtf ? `Sacó ${Math.round(d.Puntaje)}: es un ETF (un fondo con muchas empresas adentro), así que se califica solo por el gráfico, que está ${califica(nt, false)}.` : `Sacó ${Math.round(d.Puntaje)} porque tiene fundamentales ${califica(nf, true)} (${nf}) y un gráfico ${califica(nt, false)} (${nt}).`;
+  const res = d.Mercado === "Cripto" ? `Sacó ${Math.round(d.Puntaje)}: es una cripto (no tiene balances), así que se califica solo por el gráfico, que está ${califica(nt, false)}.`
+    : esEtf ? `Sacó ${Math.round(d.Puntaje)}: es un ETF (un fondo con muchas empresas adentro), así que se califica solo por el gráfico, que está ${califica(nt, false)}.` : `Sacó ${Math.round(d.Puntaje)} porque tiene fundamentales ${califica(nf, true)} (${nf}) y un gráfico ${califica(nt, false)} (${nt}).`;
   const li = (arr, cls, ic) => arr.map(([t, e]) => `<li class="${cls}"><i>${ic}</i><span>${esc(t)}<small>${esc(e)}</small></span></li>`).join("");
   let conc;
-  if (esEtf) conc = nt >= 70 ? "El fondo viene en buena tendencia." : nt >= 55 ? "Tendencia aceptable, sin mucha fuerza." : "El gráfico no acompaña por ahora.";
+  if (d.Mercado === "Cripto") conc = nt >= 70 ? "Viene en buena tendencia. Ojo: las cripto suben y bajan mucho más que las acciones." : nt >= 55 ? "Tendencia aceptable, sin mucha fuerza." : "El gráfico no acompaña por ahora.";
+  else if (esEtf) conc = nt >= 70 ? "El fondo viene en buena tendencia." : nt >= 55 ? "Tendencia aceptable, sin mucha fuerza." : "El gráfico no acompaña por ahora.";
   else if (nf >= 70 && nt >= 70) conc = "Empresa sólida y en buen momento. Es una buena candidata para investigar más a fondo.";
   else if (nf >= 70) conc = "Buena empresa, pero el gráfico no acompaña. Puede convenir esperar un mejor momento para entrar.";
   else if (nt >= 70) conc = "El precio viene bien, pero los números de la empresa no lo respaldan del todo. Es una apuesta más especulativa.";
@@ -1224,7 +1312,8 @@ function tarjeta(d) {
       <div class="rank">${d.puesto}</div>
       <div class="info">
         <div class="tk">${d.Mercado === "Argentina" ? "🇦🇷 " : ""}${esc(d.Ticker)}${cambio(d)}</div>
-        <div class="name">${esc(d.Empresa)} · ${esc(d.Sector || "s/d")}${d.CEDEAR === false ? ` · <span class="sin-cedear">Sin CEDEAR</span>` : ""}${d.CEDEAR && d["Símbolo BYMA"] ? ` · En BYMA: <b>${esc(d["Símbolo BYMA"])}</b>` : ""}</div>
+        <div class="name">${d.Mercado === "Cripto" ? "₿ " : ""}${esc(d.Empresa)} · ${esc(d.Sector || "s/d")}${d.CEDEAR === false ? ` · <span class="sin-cedear">Sin CEDEAR</span>` : ""}${d.CEDEAR && d["Símbolo BYMA"] ? ` · En BYMA: <b>${esc(d["Símbolo BYMA"])}</b>` : ""}</div>
+        ${d._vivo ? `<div class="vivo-precio">🟢 <b>US$ ${precioTxt(d._vivo.usd)}</b>${dolarCripto ? ` · <b>$ ${precioTxt(d._vivo.usd * dolarCripto, d._vivo.usd * dolarCripto >= 100 ? 0 : 2)}</b>` : ""}${d._vivo.var24 != null ? ` · 24 h ${d._vivo.var24 > 0 ? "+" : ""}${num(d._vivo.var24)}%` : ""}</div>` : ""}
         <div class="bars">${d["Nota fund"] == null ? "" : barra("Fund.", d["Nota fund"])}${barra("Técn.", d["Nota tec"])}</div>
       </div>
       <div class="score" style="background:color-mix(in srgb, ${colorNota(p)} 16%, transparent);color:${colorNota(p)}">${Math.round(p)}</div>
@@ -1239,7 +1328,7 @@ function tarjeta(d) {
       ${historial(d)}
       ${motivos(d)}
       <div class="grid">
-        <div class="kv"><b>US$ ${fmt(d.Precio)}</b><span>Precio</span></div>
+        <div class="kv"><b>US$ ${precioTxt(d.Precio)}</b><span>Precio</span></div>
         <div class="kv"><b>${fmt(d["P/E"])}</b><span>P/E</span></div>
         <div class="kv"><b>${fmt(d["ROE %"], "%")}</b><span>ROE</span></div>
         <div class="kv"><b>${fmt(d["Deuda/Pat %"], "%")}</b><span>Deuda/Patrimonio</span></div>
@@ -1252,23 +1341,33 @@ function tarjeta(d) {
       ${d["Nota fund"] == null ? "" : `<h3>Fundamental · ${d["Nota fund"]}</h3>${criterios(FUND, d._notas)}`}
       <h3>Técnico · ${d["Nota tec"]}</h3>${criterios(TEC, d._notas)}
       <div class="links">
-        <button class="news-btn" data-seguir="${esc(d.Ticker)}">👀 Seguir</button>
-        <a href="https://finance.yahoo.com/quote/${encodeURIComponent(d.Ticker)}" target="_blank" rel="noopener">Yahoo Finance</a>
-        <a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(d.Ticker.replace("-", "."))}" target="_blank" rel="noopener">Ver gráfico</a>
+        ${d.Mercado === "Cripto" ? "" : `<button class="news-btn" data-seguir="${esc(d.Ticker)}">👀 Seguir</button>`}
+        <a href="https://finance.yahoo.com/quote/${encodeURIComponent(d.Yahoo || d.Ticker)}" target="_blank" rel="noopener">Yahoo Finance</a>
+        <a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(d.Mercado === "Cripto" ? d.Ticker + "USD" : d.Ticker.replace("-", "."))}" target="_blank" rel="noopener">Ver gráfico</a>
       </div>
       </div>
     </div>
   </div>`;
 }
 
+function infoCripto() {
+  if (sector !== CRIPTO) return "";
+  const hora = vivoHora ? vivoHora.toLocaleTimeString("es-AR") : null;
+  return `<div class="vivo-info">₿ <b>Nota técnica en vivo</b>: se recalcula cada 30 s con el precio de CoinGecko${hora ? ` (último: ${hora})` : " (cargando…)"}.
+    ${dolarCripto ? `Dólar cripto: <b>$ ${precioTxt(dolarCripto, 0)}</b> (CriptoYa).` : ""}
+    Las cripto se compran en exchanges (Lemon, Belo, Binance…), no en IOL.
+    Es una herramienta de seguimiento, no una recomendación de compra.</div>`;
+}
+
 function render() {
   const l = lista();
-  $("list").innerHTML = l.length ? l.map(tarjeta).join("")
-    : `<div class="empty">No hay acciones con ese filtro.${soloCedear ? "<br>Si buscás una sin CEDEAR, destildá «Solo las que se pueden comprar»." : ""}</div>`;
+  $("list").innerHTML = infoCripto() + (l.length ? l.map(tarjeta).join("")
+    : `<div class="empty">No hay acciones con ese filtro.${soloCedear ? "<br>Si buscás una sin CEDEAR, destildá «Solo las que se pueden comprar»." : ""}</div>`);
 }
 
 function chips() {
-  const sectores = ["Todos", ARG, ETF, ...[...new Set(datos.map((d) => d.Sector).filter((s) => s && s !== "ETF"))].sort()];
+  const hayCripto = datos.some((d) => d.Mercado === "Cripto");
+  const sectores = ["Todos", ARG, ETF, ...(hayCripto ? [CRIPTO] : []), ...[...new Set(datos.map((d) => d.Sector).filter((s) => s && s !== "ETF" && s !== "Cripto"))].sort()];
   $("chips").innerHTML = sectores.map((s) => `<button class="chip${s === sector ? " on" : ""}" data-s="${esc(s)}">${esc(s)}</button>`).join("");
 }
 
@@ -1297,6 +1396,7 @@ $("chips").addEventListener("click", (e) => {
   const c = e.target.closest(".chip");
   if (!c) return;
   sector = c.dataset.s; chips(); render();
+  if (sector === CRIPTO) actualizarVivo();
 });
 $("nchips").addEventListener("click", (e) => {
   const c = e.target.closest(".chip");
@@ -1315,6 +1415,9 @@ fetch("data.json?v=" + Date.now())
   .then((j) => {
     datos = j.acciones || [];
     maxSector = j.max_por_sector ?? 3;
+    if (j.params_tecnico) paramsTec = j.params_tecnico;
+    setInterval(actualizarVivo, 30000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) actualizarVivo(); });
     $("sub").textContent = `Actualizado: ${j.actualizado} · ${datos.length} acciones analizadas`;
     chips(); render();
   })

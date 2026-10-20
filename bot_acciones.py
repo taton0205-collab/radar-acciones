@@ -52,6 +52,25 @@ ARGENTINA = ["GGAL", "YPF", "PAM", "BMA", "BBAR", "SUPV", "CEPU", "TGS", "EDN",
 # ETFs (fondos que se compran como una acción). No tienen balances: se califican solo por el gráfico
 ETFS = ["SPY", "QQQ", "DIA", "IWM", "EEM", "EWZ", "XLK", "XLF", "XLE", "XLV",
         "SMH", "GLD", "SLV", "ARKK", "IBIT", "XLY", "XLI", "XLU", "EWJ", "FXI", "URA"]
+# Cripto (se compran en exchanges, no en IOL). Solo nota técnica, como los ETFs.
+# Ticker en la app: (símbolo en Yahoo, id en CoinGecko para el precio en vivo, nombre)
+CRIPTO = {
+    "BTC": ("BTC-USD", "bitcoin", "Bitcoin"),
+    "ETH": ("ETH-USD", "ethereum", "Ethereum"),
+    "BNB": ("BNB-USD", "binancecoin", "BNB"),
+    "XRP": ("XRP-USD", "ripple", "XRP"),
+    "SOL": ("SOL-USD", "solana", "Solana"),
+    "TRX": ("TRX-USD", "tron", "TRON"),
+    "DOGE": ("DOGE-USD", "dogecoin", "Dogecoin"),
+    "ADA": ("ADA-USD", "cardano", "Cardano"),
+    "LINK": ("LINK-USD", "chainlink", "Chainlink"),
+    "XLM": ("XLM-USD", "stellar", "Stellar"),
+    "AVAX": ("AVAX-USD", "avalanche-2", "Avalanche"),
+    "LTC": ("LTC-USD", "litecoin", "Litecoin"),
+    "DOT": ("DOT-USD", "polkadot", "Polkadot"),
+    "BCH": ("BCH-USD", "bitcoin-cash", "Bitcoin Cash"),
+    "HBAR": ("HBAR-USD", "hedera-hashgraph", "Hedera"),
+}
 
 # --- Filtros fundamentales ---
 PE_MAX = 30                # P/E máximo
@@ -392,6 +411,9 @@ def marcar_cedears(filas):
     for fila in filas:
         t = fila["Ticker"]
         simbolo = SIMBOLO_CEDEAR.get(t, t).replace("-", "")
+        if fila.get("Mercado") == "Cripto":
+            fila["CEDEAR"] = None      # se compran en exchanges
+            continue
         if fila.get("Mercado") == "Argentina":
             fila["CEDEAR"] = True      # se compran como acción local
         else:
@@ -425,11 +447,12 @@ def guardar_web(ranking):
         fila["Nueva"] = bool(anterior) and t not in anterior
 
     marcar_cedears(filas)
-    # Noticias solo de las primeras que se pueden comprar
-    con_noticias = [f for f in filas if f["CEDEAR"] is not False][:NOTICIAS_TOP]
+    # Noticias solo de las primeras que se pueden comprar (+ todas las cripto, aparte)
+    con_noticias = ([f for f in filas if f["CEDEAR"] is not False and f["Mercado"] != "Cripto"][:NOTICIAS_TOP]
+                    + [f for f in filas if f["Mercado"] == "Cripto"])
     print(f"Bajando noticias de las primeras {NOTICIAS_TOP}...")
     for fila in con_noticias:
-        fila["Noticias"] = obtener_noticias(fila["Ticker"], fila.get("Empresa", ""))
+        fila["Noticias"] = obtener_noticias(fila.get("Yahoo") or fila["Ticker"], fila.get("Empresa", ""))
         time.sleep(0.2)
 
     # IA: buena/mala, impacto y explicación (reusa lo que ya estaba analizado)
@@ -443,6 +466,9 @@ def guardar_web(ranking):
     datos = {
         "actualizado": hora_arg.strftime("%d/%m/%Y %H:%M"),
         "max_por_sector": MAX_POR_SECTOR,
+        # Para que la app recalcule la nota técnica de las cripto igual que el bot
+        "params_tecnico": {"rsi_min": RSI_MIN, "rsi_max": RSI_MAX, "vol_ratio_min": VOL_RATIO_MIN,
+                           "cruce_dias_max": CRUCE_DIAS_MAX, "cruce_bonus": CRUCE_BONUS},
         "acciones": filas,
         "historial": historial,
     }
@@ -463,7 +489,8 @@ def main():
             print(f"No se pudo bajar el S&P 500 ({e}). Uso la lista propia.")
 
     extra = [t for t in ARGENTINA + ETFS if t not in tickers]
-    tickers = list(tickers) + extra
+    tickers = list(tickers) + extra + [y for y, _, _ in CRIPTO.values()]
+    yahoo_a_cripto = {y: t for t, (y, _, _) in CRIPTO.items()}
     print(f"Descargando precios de {len(tickers)} acciones...")
     precios = yf.download(
         tickers, period="1y", auto_adjust=True,
@@ -473,9 +500,11 @@ def main():
     filas = []
     for i, ticker in enumerate(tickers, 1):
         print(f"Analizando [{i}/{len(tickers)}] {ticker}      ", end="\r")
+        yahoo = ticker
+        ticker = yahoo_a_cripto.get(yahoo, yahoo)   # BTC-USD -> BTC
         try:
             if isinstance(precios.columns, pd.MultiIndex):
-                df = precios[ticker]
+                df = precios[yahoo]
             else:
                 df = precios
 
@@ -483,11 +512,26 @@ def main():
             if tecnico is None:
                 continue
             datos_tec, crit_tec, notas_tec = tecnico
-            mercado = "ETF" if ticker in ETFS else "Argentina" if ticker in ARGENTINA else "EE.UU."
+            mercado = ("Cripto" if yahoo in yahoo_a_cripto else "ETF" if ticker in ETFS
+                       else "Argentina" if ticker in ARGENTINA else "EE.UU.")
             if mercado == "EE.UU." and sum(crit_tec.values()) < TECNICO_MINIMO:
                 continue  # gráfico flojo: no vale la pena pedir fundamentales
 
-            if mercado == "ETF":
+            extra_cripto = {}
+            if mercado == "Cripto":
+                _, gecko, nombre = CRIPTO[ticker]
+                info = {"shortName": nombre, "sector": "Cripto"}
+                datos_fund, crit_fund, notas_fund, crudos = {}, {}, {}, None
+                # Historial para que la app recalcule la nota con el precio en vivo
+                cierres = df["Close"].dropna()
+                volumen = df["Volume"].dropna()
+                extra_cripto = {
+                    "Yahoo": yahoo, "CoinGecko": gecko,
+                    "_serie": {"fin": cierres.index[-1].strftime("%Y-%m-%d"),
+                               "cierres": [float(f"{v:.6g}") for v in cierres],
+                               "vol_ratio": float(volumen.tail(20).mean() / volumen.tail(60).mean())},
+                }
+            elif mercado == "ETF":
                 try:
                     info = yf.Ticker(ticker).info
                 except Exception:
@@ -515,6 +559,7 @@ def main():
             "_notas_abs": notas_fund,
             "_notas_tec": notas_tec,
             "_crudos": crudos,
+            **extra_cripto,
         })
         time.sleep(0.2)  # para no saturar a Yahoo
 
@@ -537,7 +582,7 @@ def main():
         base = {k: v for k, v in notas_tec.items() if k != "Cruce reciente"}
         nota_tec = sum(base.values()) / len(base) * 100
         nota_tec = min(100.0, nota_tec + notas_tec.get("Cruce reciente", 0) * CRUCE_BONUS)
-        if nota_fund is None:   # ETF: solo cuenta el gráfico
+        if nota_fund is None:   # ETF y cripto: solo cuenta el gráfico
             f["Puntaje"] = round(nota_tec, 1)
             f["Nota fund"] = None
         else:
@@ -563,7 +608,7 @@ def main():
     ranking.index += 1
     ranking = ranking.round(1)
     guardar_web(ranking)
-    ranking = ranking.drop(columns=["_notas", "_sector"])
+    ranking = ranking.drop(columns=["_notas", "_sector", "_serie"], errors="ignore")
 
     # Top con límite por sector, para diversificar
     if MAX_POR_SECTOR > 0:
