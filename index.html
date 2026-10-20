@@ -1354,7 +1354,7 @@ function tarjeta(d) {
 
 function infoCripto() {
   if (sector !== CRIPTO) return "";
-  const hora = vivoHora ? vivoHora.toLocaleTimeString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" }) : null;
+  const hora = vivoHora ? vivoHora.toLocaleTimeString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", hour12: false }) : null;
   return `<div class="vivo-info">₿ <b>Nota técnica en vivo</b>: se recalcula cada 30 s con el precio de CoinGecko${hora ? ` (último: ${hora})` : " (cargando…)"}.
     ${dolarCripto ? `Dólar cripto: <b>$ ${precioTxt(dolarCripto, 0)}</b> (CriptoYa).` : ""}
     Las cripto se compran en exchanges (Lemon, Belo, Binance…), no en IOL.
