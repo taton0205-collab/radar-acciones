@@ -5,6 +5,11 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch:
 
+# Un solo aviso a la vez (GitHub + cron-job.org no se pisan)
+concurrency:
+  group: avisos
+  cancel-in-progress: false
+
 jobs:
   avisos:
     runs-on: ubuntu-latest

@@ -35,6 +35,3 @@ jobs:
           git commit -m "Ranking actualizado" || echo "Sin cambios"
           git pull --rebase
           git push
-          git add data.json
-          git commit -m "Ranking actualizado" || echo "Sin cambios"
-          git push
