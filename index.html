@@ -279,6 +279,8 @@ const $ = (id) => document.getElementById(id);
 const colorNota = (n) => n >= 75 ? "var(--accent)" : n >= 50 ? "var(--mid)" : "var(--low)";
 const fmt = (v, suf = "") => (v === null || v === undefined) ? "–" : (Math.round(v * 10) / 10).toLocaleString("es-AR") + suf;
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// Solo links web normales (http/https); cualquier otra cosa no se abre
+const urlSegura = (u) => (/^https?:\/\//i.test(String(u ?? "")) ? esc(u) : "#");
 
 const NOMBRES = {
   "P/E": "P/E", "ROE": "ROE", "Deuda/Pat": "Deuda/Patrimonio",
@@ -374,7 +376,7 @@ function renderNoticias() {
   $("feed").innerHTML = items.length
     ? items.slice(0, 150).map((n) => `<div class="nitem">
         <div class="top"><span class="badge">${mias.has(n.ticker) ? "⭐ " : ""}${esc(n.ticker)}</span>${esc(n.fuente)}${n.fuente && hace(n.fecha) ? " · " : ""}${hace(n.fecha)}</div>
-        <a class="t" href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.titulo)}</a>${iaNoticia(n)}</div>`).join("")
+        <a class="t" href="${urlSegura(n.url)}" target="_blank" rel="noopener">${esc(n.titulo)}</a>${iaNoticia(n)}</div>`).join("")
     : `<div class="empty">Todavía no hay noticias. Se actualizan con el ranking (18:30) y con los precios (cada 30 min).</div>`;
 }
 
@@ -1102,7 +1104,7 @@ document.addEventListener("click", (e) => {
 function noticiasEmpresa(d) {
   if (!d.Noticias) return `<div class="none">Hay noticias solo para las primeras del ranking.</div>`;
   if (!d.Noticias.length) return `<div class="none">Sin noticias recientes.</div>`;
-  return d.Noticias.map((n) => `<div class="cn"><a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.titulo)}<small>${esc(n.fuente)}${n.fuente && hace(n.fecha) ? " · " : ""}${hace(n.fecha)}</small></a>${iaNoticia(n)}</div>`).join("");
+  return d.Noticias.map((n) => `<div class="cn"><a href="${urlSegura(n.url)}" target="_blank" rel="noopener">${esc(n.titulo)}<small>${esc(n.fuente)}${n.fuente && hace(n.fecha) ? " · " : ""}${hace(n.fecha)}</small></a>${iaNoticia(n)}</div>`).join("");
 }
 
 const num = (v) => (Math.round(v * 10) / 10).toLocaleString("es-AR");

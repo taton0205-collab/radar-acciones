@@ -18,6 +18,7 @@ objetivo, se vuelve a activar.
 """
 
 import json
+import secrets
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -132,6 +133,9 @@ def procesar_mensajes(perfiles):
             partes = texto.split(maxsplit=1)
             codigo = partes[1].strip() if len(partes) > 1 else ""
             p = por_codigo.get(codigo)
+            if not p and str(chat) in por_chat:
+                enviar(chat, "✅ Ya estás vinculado. Te sigo avisando acá.")
+                continue
             if not p:
                 enviar(chat, "👋 Para recibir avisos, entrá a la app → <b>Cartera</b> → "
                              "<b>Vincular Telegram</b> y tocá el botón desde ahí.")
@@ -139,8 +143,12 @@ def procesar_mensajes(perfiles):
             if not p.get("aprobado"):
                 enviar(chat, "⏳ Tu cuenta todavía no fue aprobada. Cuando la aprueben, volvé a tocar Vincular.")
                 continue
-            sb_patch("perfiles", f"id=eq.{p['id']}", {"telegram_chat_id": str(chat)})
+            # Código nuevo: el link viejo de "Vincular Telegram" deja de servir
+            nuevo_codigo = secrets.token_hex(4)
+            sb_patch("perfiles", f"id=eq.{p['id']}", {"telegram_chat_id": str(chat), "telegram_codigo": nuevo_codigo})
             p["telegram_chat_id"] = str(chat)
+            por_codigo.pop(codigo, None)
+            por_chat[str(chat)] = p
             nombre = p.get("nombre") or p["email"].split("@")[0]
             enviar(chat, f"✅ <b>¡Listo, {nombre}!</b>\nDesde ahora te aviso acá cuando tus acciones "
                          f"lleguen a tu precio de venta, toquen el stop o cuando una acción en seguimiento "
