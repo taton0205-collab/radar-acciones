@@ -280,7 +280,7 @@
 const TOP_N = 15;
 let datos = [], maxSector = 3, modo = "top", sector = "Todos", busqueda = "", soloCedear = true;
 // Cripto en vivo: nota recalculada con el precio de CoinGecko cada 30 s
-let enVivo = {}, dolarCripto = null, vivoHora = null, paramsTec = { cruce_dias_max: 30, cruce_bonus: 10 };
+let enVivo = {}, dolarCripto = null, vivoHora = null, vivoPedido = 0, paramsTec = { cruce_dias_max: 30, cruce_bonus: 10 };
 let abiertos = new Set();
 
 const $ = (id) => document.getElementById(id);
@@ -338,6 +338,8 @@ function tecnicoCripto(c, volRatio, P) {
 async function actualizarVivo() {
   const cr = datos.filter((d) => d.Mercado === "Cripto" && d._serie && d.CoinGecko);
   if (!cr.length || document.hidden || sector !== CRIPTO) return;
+  if (vivoPedido && Date.now() - vivoPedido < 20000) return;   // no más de 1 pedido cada 20 s (límite gratis de CoinGecko)
+  vivoPedido = Date.now();
   try {
     const ids = cr.map((d) => d.CoinGecko).join(",");
     const [pg, pa] = await Promise.all([
@@ -1352,7 +1354,7 @@ function tarjeta(d) {
 
 function infoCripto() {
   if (sector !== CRIPTO) return "";
-  const hora = vivoHora ? vivoHora.toLocaleTimeString("es-AR") : null;
+  const hora = vivoHora ? vivoHora.toLocaleTimeString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" }) : null;
   return `<div class="vivo-info">₿ <b>Nota técnica en vivo</b>: se recalcula cada 30 s con el precio de CoinGecko${hora ? ` (último: ${hora})` : " (cargando…)"}.
     ${dolarCripto ? `Dólar cripto: <b>$ ${precioTxt(dolarCripto, 0)}</b> (CriptoYa).` : ""}
     Las cripto se compran en exchanges (Lemon, Belo, Binance…), no en IOL.
