@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import requests
 import yfinance as yf
+from cripto import CRIPTO
 
 # ======================= CONFIGURACIÓN =======================
 USAR_SP500 = True   # True = analiza las ~500 del S&P 500 | False = usa la lista de abajo
@@ -52,25 +53,7 @@ ARGENTINA = ["GGAL", "YPF", "PAM", "BMA", "BBAR", "SUPV", "CEPU", "TGS", "EDN",
 # ETFs (fondos que se compran como una acción). No tienen balances: se califican solo por el gráfico
 ETFS = ["SPY", "QQQ", "DIA", "IWM", "EEM", "EWZ", "XLK", "XLF", "XLE", "XLV",
         "SMH", "GLD", "SLV", "ARKK", "IBIT", "XLY", "XLI", "XLU", "EWJ", "FXI", "URA"]
-# Cripto (se compran en exchanges, no en IOL). Solo nota técnica, como los ETFs.
-# Ticker en la app: (símbolo en Yahoo, id en CoinGecko para el precio en vivo, nombre)
-CRIPTO = {
-    "BTC": ("BTC-USD", "bitcoin", "Bitcoin"),
-    "ETH": ("ETH-USD", "ethereum", "Ethereum"),
-    "BNB": ("BNB-USD", "binancecoin", "BNB"),
-    "XRP": ("XRP-USD", "ripple", "XRP"),
-    "SOL": ("SOL-USD", "solana", "Solana"),
-    "TRX": ("TRX-USD", "tron", "TRON"),
-    "DOGE": ("DOGE-USD", "dogecoin", "Dogecoin"),
-    "ADA": ("ADA-USD", "cardano", "Cardano"),
-    "LINK": ("LINK-USD", "chainlink", "Chainlink"),
-    "XLM": ("XLM-USD", "stellar", "Stellar"),
-    "AVAX": ("AVAX-USD", "avalanche-2", "Avalanche"),
-    "LTC": ("LTC-USD", "litecoin", "Litecoin"),
-    "DOT": ("DOT-USD", "polkadot", "Polkadot"),
-    "BCH": ("BCH-USD", "bitcoin-cash", "Bitcoin Cash"),
-    "HBAR": ("HBAR-USD", "hedera-hashgraph", "Hedera"),
-}
+# Cripto (se compran en exchanges, no en IOL): la lista está en cripto.py. Solo nota técnica, como los ETFs.
 
 # --- Filtros fundamentales ---
 PE_MAX = 30                # P/E máximo

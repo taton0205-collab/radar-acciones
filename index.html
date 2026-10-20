@@ -280,7 +280,7 @@
 const TOP_N = 15;
 let datos = [], maxSector = 3, modo = "top", sector = "Todos", busqueda = "", soloCedear = true;
 // Cripto en vivo: nota recalculada con el precio de CoinGecko cada 30 s
-let enVivo = {}, dolarCripto = null, vivoHora = null, vivoPedido = 0, paramsTec = { cruce_dias_max: 30, cruce_bonus: 10 };
+let enVivo = {}, dolarCripto = null, vivoHora = null, cacheCG = { t: 0, ids: [], pg: null }, paramsTec = { cruce_dias_max: 30, cruce_bonus: 10 };
 let abiertos = new Set();
 
 const $ = (id) => document.getElementById(id);
@@ -335,21 +335,34 @@ function tecnicoCripto(c, volRatio, P) {
   return { precio, rsi, dist, dias, tec, notas };
 }
 
+const geckoId = (t) => datos.find((d) => d.Mercado === "Cripto" && d.Ticker === t)?.CoinGecko;
+const nombreCripto = (t) => datos.find((d) => d.Mercado === "Cripto" && d.Ticker === t)?.Empresa || t;
+
+// Precio de CoinGecko (US$ y cambio 24 h) + dólar cripto de CriptoYa (como cripto.py).
+// Pide todas las cripto juntas y guarda la respuesta 20 s (límite gratis de CoinGecko).
+async function pedirCripto(ids) {
+  ids = ids.filter(Boolean);
+  if (!ids.length) return null;
+  if (Date.now() - cacheCG.t < 20000 && ids.every((i) => cacheCG.ids.includes(i))) return cacheCG.pg;
+  const todos = [...new Set([...ids, ...datos.filter((d) => d.Mercado === "Cripto").map((d) => d.CoinGecko).filter(Boolean)])];
+  cacheCG.t = Date.now();   // aunque falle, no reintentar enseguida
+  const [pg, pa] = await Promise.all([
+    fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${todos.join(",")}&vs_currencies=usd&include_24hr_change=true`).then((r) => r.ok ? r.json() : null).catch(() => null),
+    fetch("https://criptoya.com/api/usdt/ars/1").then((r) => r.ok ? r.json() : null).catch(() => null),
+  ]);
+  if (pa) {   // dólar cripto: mediana de lo que cobran los exchanges por 1 USDT
+    const v = Object.values(pa).map((x) => x && x.totalAsk).filter((x) => x > 0).sort((a, b) => a - b);
+    if (v.length) dolarCripto = v[Math.floor(v.length / 2)];
+  }
+  if (pg) cacheCG = { t: cacheCG.t, ids: todos, pg };
+  return pg;
+}
+
 async function actualizarVivo() {
   const cr = datos.filter((d) => d.Mercado === "Cripto" && d._serie && d.CoinGecko);
   if (!cr.length || document.hidden || sector !== CRIPTO) return;
-  if (vivoPedido && Date.now() - vivoPedido < 20000) return;   // no más de 1 pedido cada 20 s (límite gratis de CoinGecko)
-  vivoPedido = Date.now();
   try {
-    const ids = cr.map((d) => d.CoinGecko).join(",");
-    const [pg, pa] = await Promise.all([
-      fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`).then((r) => r.ok ? r.json() : null),
-      fetch("https://criptoya.com/api/usdt/ars/1").then((r) => r.ok ? r.json() : null).catch(() => null),
-    ]);
-    if (pa) {   // dólar cripto: mediana de lo que cobran los exchanges por 1 USDT
-      const v = Object.values(pa).map((x) => x && x.totalAsk).filter((x) => x > 0).sort((a, b) => a - b);
-      if (v.length) dolarCripto = v[Math.floor(v.length / 2)];
-    }
+    const pg = await pedirCripto(cr.map((d) => d.CoinGecko));
     if (!pg) return;
     const hoy = new Date().toISOString().slice(0, 10);   // las velas de cripto cierran en hora UTC
     for (const d of cr) {
@@ -614,10 +627,36 @@ let ultimoBroker = "";
 try { ultimoBroker = localStorage.getItem("ultimoBroker") || ""; } catch {}
 const selBroker = (id, valor) => `<select id="${id}"><option value="">— Elegí —</option>${BROKERS.map((b) => `<option${b === valor ? " selected" : ""}>${b}</option>`).join("")}</select>`;
 
+const cantTxt = (v) => Number(v).toLocaleString("es-AR", { maximumFractionDigits: 8 });
 const ars = (v, dec) => v == null ? "–" : "$ " + Number(v).toLocaleString("es-AR", { minimumFractionDigits: dec ?? (Math.abs(v) >= 1000 ? 0 : 2), maximumFractionDigits: dec ?? (Math.abs(v) >= 1000 ? 0 : 2) });
 const pctTxt = (v) => v == null ? "–" : (v >= 0 ? "+" : "") + num(v) + "%";
 const clsSigno = (v) => v == null ? "" : v >= 0 ? "up" : "down";
 const hoyISO = () => new Date(Date.now() - 3 * 36e5).toISOString().slice(0, 10);
+
+// Pisa el precio de precios.json de las cripto de tu cartera/seguimiento con el de ahora
+async function aplicarVivoCartera() {
+  const ts = [...new Set([...ops, ...seguidas].map((o) => o.ticker))].filter((t) => geckoId(t));
+  if (!ts.length) return false;
+  const pg = await pedirCripto(ts.map(geckoId));
+  if (!pg || !dolarCripto) return false;
+  precios ||= { tickers: {} };
+  precios.tickers ||= {};
+  for (const t of ts) {
+    const p = pg[geckoId(t)];
+    if (!p || !(p.usd > 0)) continue;
+    const prev = p.usd_24h_change != null ? p.usd / (1 + p.usd_24h_change / 100) : null;
+    precios.tickers[t] = { ...(precios.tickers[t] || {}), usd: p.usd, usd_prev: prev,
+      ars: p.usd * dolarCripto, ars_prev: prev ? prev * dolarCripto : null, vivo: true };
+  }
+  return true;
+}
+
+// Cada 30 s: si estás mirando la cartera y tenés cripto, la redibuja con el precio nuevo
+async function refrescarCartera() {
+  if (document.hidden || !$("vCartera").classList.contains("on") || $("modal").classList.contains("on")) return;
+  if (!ops.length || !$("carteraBox").querySelector(".resumen")) return;
+  if (await aplicarVivoCartera()) pintarCartera();
+}
 
 async function cargarPrecios() {
   try { const r = await fetch("precios.json?v=" + Date.now()); precios = r.ok ? await r.json() : null; }
@@ -828,6 +867,12 @@ async function renderMiCartera() {
   if (r1.error) { box.innerHTML = `<div class="msg">Error: ${esc(r1.error.message)}</div>`; return; }
   ops = r1.data || [];
   objs = Object.fromEntries((r2.data || []).map((o) => [o.ticker, o]));
+  await aplicarVivoCartera().catch(() => false);
+  pintarCartera();
+}
+
+function pintarCartera() {
+  const box = $("carteraBox");
   posiciones = calcularPosiciones();
 
   const abiertas = posiciones.filter((p) => p.cant > 0);
@@ -895,8 +940,8 @@ function formSeguimiento(ticker = "") {
   abrirModal(`<h2>${s ? "Editar seguimiento" : "Seguir una acción"}</h2>
     ${nota ? `<div class="sub" style="margin-bottom:10px">${esc(nota.Empresa)} · nota radar ${Math.round(nota.Puntaje)}</div>` : ""}
     <div class="campo"><label>Ticker</label><input id="sTicker" value="${esc(ticker)}" ${s ? "disabled" : ""} autocapitalize="characters" placeholder="AAPL"></div>
-    <div class="campo"><label>Avisarme si el CEDEAR baja de ($)</label><input id="sPrecio" type="number" inputmode="decimal" step="any" value="${s?.precio_compra ? +s.precio_compra : ""}" placeholder="${pr ? Math.round(pr * 0.95) : "15000"}">
-      <small>${pr ? `Hoy está a ${ars(pr)}. Ejemplo: −5% sería ${ars(pr * 0.95)}.` : "Precio en pesos de 1 CEDEAR."}</small></div>
+    <div class="campo"><label>Avisarme si baja de ($)</label><input id="sPrecio" type="number" inputmode="decimal" step="any" value="${s?.precio_compra ? +s.precio_compra : ""}" placeholder="${pr ? Math.round(pr * 0.95) : "15000"}">
+      <small>${pr ? `Hoy está a ${ars(pr)}. Ejemplo: −5% sería ${ars(pr * 0.95)}.` : "Precio en pesos de 1 CEDEAR (o de 1 unidad, si es cripto)."}</small></div>
     <div class="campo"><label>Nota (opcional)</label><input id="sNota" value="${esc(s?.nota || "")}" maxlength="60" placeholder="Ej: esperar resultados"></div>
     <div id="sMsg" class="estado bad" style="display:none"></div>
     <div class="acciones">${s ? `<button id="sBorrar">Dejar de seguir</button>` : `<button id="sCancelar">Cancelar</button>`}<button class="pri" id="sGuardar">Guardar</button></div>`);
@@ -936,14 +981,14 @@ function balanceTxt(ticker) {
 }
 
 function tarjetaPos(p) {
-  const sinPrecio = p.precio == null;
-  const split = p.efAccion != null ? `<div class="split">Por la acción <b class="${clsSigno(p.efAccion)}">${pctTxt(p.efAccion)}</b> · por el dólar CCL <b class="${clsSigno(p.efDolar)}">${pctTxt(p.efDolar)}</b></div>` : "";
+  const sinPrecio = p.precio == null, cripto = !!geckoId(p.ticker);
+  const split = p.efAccion != null ? `<div class="split">Por ${cripto ? "la cripto" : "la acción"} <b class="${clsSigno(p.efAccion)}">${pctTxt(p.efAccion)}</b> · por el dólar ${cripto ? "" : "CCL "}<b class="${clsSigno(p.efDolar)}">${pctTxt(p.efDolar)}</b></div>` : "";
   return `<div class="pcard">
     <div class="ph">
-      <div><div class="tk">${esc(p.ticker)}</div><div class="name">${num(p.cant)} CEDEARs · PPC ${ars(p.ppc)}</div></div>
-      <div class="pr">${sinPrecio ? `<b>–</b><span>sin precio aún</span>` : `<b>${ars(p.precio)}</b>${p.varDia != null ? `<span class="${clsSigno(p.varDia)}">${pctTxt(p.varDia)} hoy</span>` : ""}`}</div>
+      <div><div class="tk">${cripto ? "₿ " : ""}${esc(p.ticker)}</div><div class="name">${cantTxt(p.cant)} ${cripto ? esc(p.ticker) : "CEDEARs"} · PPC ${ars(p.ppc)}</div></div>
+      <div class="pr">${sinPrecio ? `<b>–</b><span>sin precio aún</span>` : `<b>${ars(p.precio)}</b>${p.varDia != null ? `<span class="${clsSigno(p.varDia)}">${pctTxt(p.varDia)} ${cripto ? "24 h" : "hoy"}</span>` : ""}`}</div>
     </div>
-    ${sinPrecio ? `<div class="estado">⏳ El precio se actualiza cada 30 min con la bolsa abierta.</div>` : `
+    ${sinPrecio ? `<div class="estado">⏳ ${cripto ? "Buscando el precio de la cripto…" : "El precio se actualiza cada 30 min con la bolsa abierta."}</div>` : `
     <div class="gan">
       <span>Ganancia <b class="${clsSigno(p.ganPct)}">${pctTxt(p.ganPct)}</b></span>
       <span>En pesos <b class="${clsSigno(p.gan)}">${p.gan >= 0 ? "+" : "−"}${ars(Math.abs(p.gan))}</b></span>
@@ -1008,15 +1053,16 @@ $("modal").addEventListener("click", (e) => { if (e.target.id === "modal") cerra
 function formOperacion(tipo, ticker = "") {
   const tickers = posiciones.filter((p) => p.cant > 0).map((p) => p.ticker);
   abrirModal(`<h2>${tipo === "compra" ? "Cargar compra" : "Cargar venta"}</h2>
-    <div class="campo"><label>Ticker (ej: WDC, AAPL, KO)</label>
+    <div class="campo"><label>Ticker (ej: WDC, AAPL, KO, BTC)</label>
       <input id="fTicker" value="${esc(ticker || (tipo === "venta" && tickers.length === 1 ? tickers[0] : ""))}" list="misTickers" autocapitalize="characters" placeholder="WDC">
-      <datalist id="misTickers">${tickers.map((t) => `<option value="${esc(t)}">`).join("")}</datalist></div>
+      <datalist id="misTickers">${tickers.map((t) => `<option value="${esc(t)}">`).join("")}</datalist>
+      <small id="fTipoTk"></small></div>
     <div class="fila2">
       <div class="campo"><label>Fecha</label><input id="fFecha" type="date" value="${hoyISO()}" max="${hoyISO()}"></div>
-      <div class="campo"><label>Cantidad de CEDEARs</label><input id="fCant" type="number" inputmode="decimal" min="0" step="any" placeholder="10"></div>
+      <div class="campo"><label>Cantidad (acepta decimales)</label><input id="fCant" type="number" inputmode="decimal" min="0" step="any" placeholder="10"></div>
     </div>
     <div class="fila2">
-      <div class="campo"><label>Precio por CEDEAR ($)</label><input id="fPrecio" type="number" inputmode="decimal" min="0" step="any" placeholder="18500"></div>
+      <div class="campo"><label>Precio por unidad ($)</label><input id="fPrecio" type="number" inputmode="decimal" min="0" step="any" placeholder="18500"></div>
       <div class="campo"><label>Comisión total ($)</label><input id="fCom" type="number" inputmode="decimal" min="0" step="any" value="0"></div>
     </div>
     <div class="campo"><small id="fTotal">Total: –</small></div>
@@ -1030,6 +1076,11 @@ function formOperacion(tipo, ticker = "") {
     $("fTotal").textContent = "Total: " + ars(tipo === "compra" ? c * pr + co : c * pr - co, 2) + (tipo === "venta" ? " (lo que recibís)" : "");
   };
   ["fCant", "fPrecio", "fCom"].forEach((id) => $(id).oninput = total);
+  $("fTicker").oninput = () => {
+    const t = $("fTicker").value.trim().toUpperCase();
+    $("fTipoTk").textContent = geckoId(t) ? `₿ ${nombreCripto(t)} (cripto): poné el precio en pesos de 1 ${t}.` : "";
+  };
+  $("fTicker").oninput();
   $("fCancelar").onclick = cerrarModal;
   $("fGuardar").onclick = async () => {
     const fila = { ticker: $("fTicker").value.trim().toUpperCase(), tipo, fecha: $("fFecha").value,
@@ -1100,7 +1151,7 @@ function verMovimientos(ticker) {
   const p = posiciones.find((x) => x.ticker === ticker);
   const movs = [...p.movs].reverse();
   abrirModal(`<h2>Movimientos · ${esc(ticker)}</h2>
-    ${movs.map((o) => `<div class="mov"><span><b class="${o.tipo === "compra" ? "up" : "down"}">${o.tipo === "compra" ? "Compra" : "Venta"}</b> · ${num(+o.cantidad)} a ${ars(+o.precio)}
+    ${movs.map((o) => `<div class="mov"><span><b class="${o.tipo === "compra" ? "up" : "down"}">${o.tipo === "compra" ? "Compra" : "Venta"}</b> · ${cantTxt(+o.cantidad)} a ${ars(+o.precio)}
         <small>${o.fecha.split("-").reverse().join("/")}${+o.comision ? ` · comisión ${ars(+o.comision)}` : ""}${o.broker ? ` · 🏦 ${esc(o.broker)}` : ""}</small>
         ${o.nota ? `<small style="white-space:pre-wrap">📝 ${esc(o.nota)}</small>` : ""}</span>
         <span style="display:flex;gap:4px"><button data-edit="${o.id}" title="Editar nota y broker">✏️</button><button data-del="${o.id}" title="Borrar">🗑️</button></span></div>`).join("")}
@@ -1118,7 +1169,7 @@ function verMovimientos(ticker) {
 
 function formEditarMov(o, ticker) {
   abrirModal(`<h2>${o.tipo === "compra" ? "Compra" : "Venta"} · ${esc(ticker)}</h2>
-    <div class="sub" style="margin-bottom:12px">${num(+o.cantidad)} a ${ars(+o.precio)} · ${o.fecha.split("-").reverse().join("/")}</div>
+    <div class="sub" style="margin-bottom:12px">${cantTxt(+o.cantidad)} a ${ars(+o.precio)} · ${o.fecha.split("-").reverse().join("/")}</div>
     <div class="campo"><label>Broker</label>${selBroker("eBroker", o.broker || "")}</div>
     <div class="campo"><label>📝 Nota</label><textarea id="eNota" rows="3" maxlength="500" placeholder="¿Por qué hiciste esta operación?">${esc(o.nota || "")}</textarea></div>
     <div class="acciones"><button id="eVolver">Volver</button><button class="pri" id="eGuardar">Guardar</button></div>`);
@@ -1343,7 +1394,7 @@ function tarjeta(d) {
       ${d["Nota fund"] == null ? "" : `<h3>Fundamental · ${d["Nota fund"]}</h3>${criterios(FUND, d._notas)}`}
       <h3>Técnico · ${d["Nota tec"]}</h3>${criterios(TEC, d._notas)}
       <div class="links">
-        ${d.Mercado === "Cripto" ? "" : `<button class="news-btn" data-seguir="${esc(d.Ticker)}">👀 Seguir</button>`}
+        <button class="news-btn" data-seguir="${esc(d.Ticker)}">👀 Seguir</button>
         <a href="https://finance.yahoo.com/quote/${encodeURIComponent(d.Yahoo || d.Ticker)}" target="_blank" rel="noopener">Yahoo Finance</a>
         <a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(d.Mercado === "Cripto" ? d.Ticker + "USD" : d.Ticker.replace("-", "."))}" target="_blank" rel="noopener">Ver gráfico</a>
       </div>
@@ -1418,8 +1469,8 @@ fetch("data.json?v=" + Date.now())
     datos = j.acciones || [];
     maxSector = j.max_por_sector ?? 3;
     if (j.params_tecnico) paramsTec = j.params_tecnico;
-    setInterval(actualizarVivo, 30000);
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) actualizarVivo(); });
+    setInterval(() => { actualizarVivo(); refrescarCartera(); }, 30000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) { actualizarVivo(); refrescarCartera(); } });
     $("sub").textContent = `Actualizado: ${j.actualizado} · ${datos.length} acciones analizadas`;
     chips(); render();
   })

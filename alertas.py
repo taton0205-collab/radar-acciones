@@ -18,6 +18,7 @@ objetivo, se vuelve a activar.
 """
 
 import json
+from cripto import es_cripto, precios_vivo
 import secrets
 import os
 from datetime import datetime, timedelta, timezone
@@ -227,9 +228,10 @@ def avisos_de_usuario(posiciones, seguidas, precios, pct_mov=0, hoy=""):
             if abs(var) >= pct_mov:
                 sube = var > 0
                 donde = "de tu cartera" if origen == "cartera" else "de tu seguimiento"
+                cuando, antes = ("en 24 h", "hace 24 h estaba a") if es_cripto(t) else ("hoy", "ayer cerró a")
                 avisos.append((f"{t}|mov|{hoy}|{'sube' if sube else 'baja'}",
-                               f"{'🚀' if sube else '📉'} <b>{t} {'sube' if sube else 'cae'} {pct(var)} hoy</b> ({donde})\n"
-                               f"Precio: {pesos(precio)} · ayer cerró a {pesos(prev)}"))
+                               f"{'🚀' if sube else '📉'} <b>{t} {'sube' if sube else 'cae'} {pct(var)} {cuando}</b> ({donde})\n"
+                               f"Precio: {pesos(precio)} · {antes} {pesos(prev)}"))
 
     for p in posiciones:
         t, precio, ppc = p["ticker"], p["precio"], p["ppc"]
@@ -555,16 +557,27 @@ def main():
     ahora = ahora_arg()
     hoy = ahora.strftime("%Y-%m-%d")
     precios_de_hoy = precios.get("actualizado", "").startswith(ahora.strftime("%d/%m/%Y"))
+
+    # Cripto: precio en vivo cada 15 min, también de noche y los fines de semana
+    vivo = precios_vivo({x["ticker"] for x in ops + seg if es_cripto(x["ticker"])}, dolar_respaldo=precios.get("ccl"))
+    precios.setdefault("tickers", {})
+    for t, v in vivo.items():
+        if v.get("ars"):
+            precios["tickers"].setdefault(t, {}).update({k: v[k] for k in ("usd", "usd_prev", "ars", "ars_prev")})
+
+    def al_dia(t):
+        """¿El precio de este ticker es de ahora? Acciones: si precios.json es de hoy. Cripto: si hay precio en vivo."""
+        return t in vivo if es_cripto(t) else precios_de_hoy
     toca_resumen = ahora.weekday() < 5 and (ahora.hour, ahora.minute) >= HORA_RESUMEN
     toca_semanal = ahora.weekday() == SEMANAL[0] and (ahora.hour, ahora.minute) >= SEMANAL[1]
     nuevos = []
 
     # Stop dinámico: actualizar el precio máximo de todos (tengan o no Telegram)
-    if precios_de_hoy:
+    if precios_de_hoy or vivo:
         for u in aprobados:
             mis_objs = {o["ticker"]: o for o in objs if o["usuario"] == u["id"]}
             for p in calcular_posiciones([o for o in ops if o["usuario"] == u["id"]], mis_objs, precios):
-                if p.get("max_nuevo"):
+                if p.get("max_nuevo") and al_dia(p["ticker"]):
                     sb_patch("objetivos", f"usuario=eq.{u['id']}&ticker=eq.{p['ticker']}", {"max_precio": round(p["max_nuevo"], 4)})
                     mis_objs[p["ticker"]]["max_precio"] = p["max_nuevo"]
 
@@ -575,8 +588,11 @@ def main():
         posiciones = calcular_posiciones([o for o in ops if o["usuario"] == uid], mis_objs, precios)
         seguidas = [s for s in seg if s["usuario"] == uid]
 
-        if precios_de_hoy:
-            for clave, texto in avisos_de_usuario(posiciones, seguidas, precios, float(u.get("aviso_movimiento") or 0), hoy):
+        # Solo con precios de ahora (acciones: bolsa de hoy; cripto: precio en vivo)
+        pos_al_dia = [p for p in posiciones if al_dia(p["ticker"])]
+        seg_al_dia = [s for s in seguidas if al_dia(s["ticker"])]
+        if pos_al_dia or seg_al_dia:
+            for clave, texto in avisos_de_usuario(pos_al_dia, seg_al_dia, precios, float(u.get("aviso_movimiento") or 0), hoy):
                 if (uid, clave) not in ya and enviar(chat, texto):
                     nuevos.append({"usuario": uid, "clave": clave})
                     ya.add((uid, clave))

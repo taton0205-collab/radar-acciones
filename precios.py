@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import requests
 import yfinance as yf
+from cripto import CRIPTO, es_cripto, precios_vivo
 
 ARCHIVO = "precios.json"
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -280,12 +281,16 @@ def actual_y_previo(serie_diaria, serie_intradia):
 def main():
     tickers = tickers_en_uso()
     print(f"Tickers en uso: {tickers}")
+    # Las cripto van aparte: precio de CoinGecko, nunca de IOL ni de Yahoo con el nombre corto (ETH ≠ Ethan Allen)
+    criptos = [t for t in tickers if es_cripto(t)]
+    tickers = [t for t in tickers if not es_cripto(t)]
 
     simbolos = set()
     for t in tickers:
         simbolos |= {t, simbolo_cedear(t)}
     for ars, usd, _ in PARES_CCL:
         simbolos |= {ars, usd}
+    simbolos |= {CRIPTO[t][0] for t in criptos}   # BTC-USD, para el historial en US$
     simbolos = sorted(simbolos)
 
     kw = dict(group_by="ticker", auto_adjust=False, progress=False, threads=True)
@@ -358,6 +363,28 @@ def main():
             "ars_hist": guardar_hist(viejo.get(t, {}).get("ars_hist", {}), hoy_txt, ars),
             "balance": proximo_balance(t),
             "noticias": noticias_recientes(t),
+        }
+
+    # ---- Cripto: precio en vivo (CoinGecko) en pesos con el dólar cripto (CriptoYa) ----
+    vivo = precios_vivo(criptos, dolar_respaldo=ccl)
+    for t in criptos:
+        yahoo = CRIPTO[t][0]
+        usd_d = cierres(diario, yahoo)
+        v = vivo.get(t, {})
+        ars, ars_prev, usd, usd_prev = v.get("ars"), v.get("ars_prev"), v.get("usd"), v.get("usd_prev")
+        if usd is None:
+            print(f"  {t}: sin precio de CoinGecko")
+        salida[t] = {
+            "simbolo": yahoo,
+            "fuente": "CoinGecko",
+            "ars": round(ars, 2) if ars else None,
+            "ars_prev": round(ars_prev, 2) if ars_prev else None,
+            "usd": round(usd, 6) if usd else None,
+            "usd_prev": round(usd_prev, 6) if usd_prev else None,
+            "usd_hist": {d.strftime("%Y-%m-%d"): round(float(x), 6) for d, x in usd_d.items()},
+            "ars_hist": guardar_hist(viejo.get(t, {}).get("ars_hist", {}), hoy_txt, ars),
+            "balance": None,
+            "noticias": noticias_recientes(yahoo),
         }
 
     # IA: buena/mala, impacto y explicación (reusa lo ya analizado)
