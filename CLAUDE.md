@@ -39,7 +39,7 @@ URL: https://taton0205-collab.github.io/radar-acciones/
 - `alertas.yml` → `alertas.py` cada 15 min (no commitea).
 - `importar_iol.yml` → `importar_iol.py` 21:00 UTC lun-vie.
 - Los que commitean usan `concurrency: guardar-cambios` y `git pull --rebase`.
-- **GitHub atrasa/saltea los cron**: por eso hay despertadores externos en **cron-job.org** que llaman a la API `workflow_dispatch` con un token fine-grained (solo Actions read/write en este repo). Hecho: **Precios** (cada 15 min, 10-17:45 ART, lun-vie). **Falta**: Avisos (cada 15 min) y Ranking (18:15 lun-vie).
+- **GitHub atrasa/saltea los cron**: por eso hay despertadores externos en **cron-job.org** que llaman a la API `workflow_dispatch` con un token fine-grained (solo Actions read/write en este repo). Hechos: **Precios** (cada 15 min, 10-17:45 ART, lun-vie), **Avisos** (cada 15 min, todos los días) y **Ranking** (18:15 lun-vie).
 
 ### Secretos de GitHub (nombres)
 `SUPABASE_SECRET`, `TELEGRAM_TOKEN`, `IOL_USUARIO`, `IOL_CLAVE`, `GEMINI_KEY`.
@@ -65,9 +65,8 @@ Cambios de esquema: dame un `.sql` idempotente para pegar en SQL Editor (termina
 - Google Noticias RSS y la cuenta de IOL son para **uso personal**: si se vende la app, cambiar fuentes.
 
 ## Pendiente
-1. Terminar despertadores cron-job.org: **Avisos** y **Ranking**.
-2. Semana de prueba con un usuario (no sumar features hasta ver que todo anda).
-3. Ideas: backtest, modo práctica (plata ficticia), cripto en pesos, modo simple (vista fácil),
+1. Semana de prueba con un usuario (no sumar features hasta ver que todo anda).
+2. Ideas: backtest, modo práctica (plata ficticia), cripto en pesos, modo simple (vista fácil),
    dividendos, comparar 2 acciones, "¿qué pasa si…?", volumen raro.
-4. Proyecto **"Radar Premium"** antes de fin de 2026: planes Gratis/Premium, Mercado Pago,
+3. Proyecto **"Radar Premium"** antes de fin de 2026: planes Gratis/Premium, Mercado Pago,
    landing, resolver fuentes de datos comerciales, monotributo, cuidar CNV (herramienta de seguimiento, no recomendaciones).
