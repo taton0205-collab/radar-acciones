@@ -1,7 +1,7 @@
 # Radar de Acciones — contexto para Claude
 
 ## Quién soy y cómo quiero que me hables
-- Soy **Thiago** (Argentina), dueño y admin del proyecto. Voy a una escuela técnica, tengo poco tiempo.
+- Soy el dueño y admin del proyecto (Argentina). Tengo poco tiempo.
 - Respuestas **simples, cortas, paso a paso**, en español rioplatense. Nada de muros de texto.
 - No sé programar en profundidad: explicá qué cambia y por qué en 1-2 líneas.
 - Antes de cambios grandes, mostrame el plan corto y esperá mi OK.
@@ -12,12 +12,12 @@
 - La importación de operaciones de IOL es **solo para la cuenta del admin** (yo).
 - Cada usuario ve **solo sus datos** (RLS en Supabase). No romper eso.
 - El repo es **público**: no subir datos personales.
-- Probar antes de subir. Si algo puede romper la app para mi viejo u otros usuarios, avisar.
+- Probar antes de subir. Si algo puede romper la app para otros usuarios, avisar.
 
 ## Qué es
 App web (PWA) multi-usuario para seguir **CEDEARs/acciones en pesos**:
 ranking del S&P 500 + argentinas + ETFs con nota fundamental y técnica, cartera, seguimiento,
-avisos por Telegram, noticias con IA. Usuarios: yo (admin), mi viejo y hasta ~10 personas aprobadas por mí.
+avisos por Telegram, noticias con IA. Usuarios: yo (admin) y hasta ~10 personas aprobadas por mí.
 
 URL: https://taton0205-collab.github.io/radar-acciones/
 
@@ -43,7 +43,7 @@ URL: https://taton0205-collab.github.io/radar-acciones/
 
 ### Secretos de GitHub (nombres)
 `SUPABASE_SECRET`, `TELEGRAM_TOKEN`, `IOL_USUARIO`, `IOL_CLAVE`, `GEMINI_KEY`.
-SUPABASE_URL: https://iyejwbchituodjjeailw.supabase.co · Bot Telegram: @radar_acciones_thiago_bot
+SUPABASE_URL: https://iyejwbchituodjjeailw.supabase.co
 
 ### Supabase
 Tablas con RLS "lo mio" (`usuario = auth.uid() and esta_aprobado()`):
@@ -66,8 +66,8 @@ Cambios de esquema: dame un `.sql` idempotente para pegar en SQL Editor (termina
 
 ## Pendiente
 1. Terminar despertadores cron-job.org: **Avisos** y **Ranking**.
-2. Semana de prueba con mi viejo (no sumar features hasta ver que todo anda).
-3. Ideas: backtest, modo práctica (plata ficticia), cripto en pesos, modo papá (vista simple),
+2. Semana de prueba con un usuario (no sumar features hasta ver que todo anda).
+3. Ideas: backtest, modo práctica (plata ficticia), cripto en pesos, modo simple (vista fácil),
    dividendos, comparar 2 acciones, "¿qué pasa si…?", volumen raro.
 4. Proyecto **"Radar Premium"** antes de fin de 2026: planes Gratis/Premium, Mercado Pago,
    landing, resolver fuentes de datos comerciales, monotributo, cuidar CNV (herramienta de seguimiento, no recomendaciones).
