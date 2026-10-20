@@ -84,6 +84,11 @@ MAX_POR_SECTOR = 3                  # Máximo de acciones del mismo sector en el
 ARCHIVO_SALIDA = "ranking_acciones.csv"
 ARCHIVO_WEB = "data.json"      # Datos que lee la página web
 NOTICIAS_TOP = 40                   # Se bajan noticias de las primeras N del ranking
+
+# CEDEARs que se pueden comprar en Argentina (lista pública de BYMA, sin claves)
+BYMA_CEDEARS = "https://open.bymadata.com.ar/vanoms-be-core/rest/api/bymadata/free/cedears"
+# Ticker de EE.UU. -> símbolo del CEDEAR en BYMA, cuando no es el mismo
+SIMBOLO_CEDEAR = {"BAC": "BA.C", "DIS": "DISN", "BRK-B": "BRKB"}
 NOTICIAS_POR_EMPRESA = 5
 # =============================================================
 
@@ -365,6 +370,38 @@ def leer_historial():
         return {}
 
 
+def obtener_cedears():
+    """Símbolos de los CEDEARs en pesos de BYMA. None si no se pudo bajar la lista."""
+    try:
+        r = requests.post(BYMA_CEDEARS, timeout=30,
+                          json={"excludeZeroPxAndQty": False, "T2": True, "T1": True, "T0": False})
+        r.raise_for_status()
+        simbolos = {x["symbol"] for x in r.json() if x.get("denominationCcy") == "ARS"}
+    except Exception as e:
+        print(f"BYMA: no se pudo bajar la lista de CEDEARs ({e}). Muestro todas.")
+        return None
+    if len(simbolos) < 200:   # lista rara/incompleta: mejor no ocultar nada
+        print(f"BYMA: la lista vino con solo {len(simbolos)} CEDEARs. Muestro todas.")
+        return None
+    return simbolos
+
+
+def marcar_cedears(filas):
+    """Agrega a cada fila "CEDEAR" (True/False, o None si no se sabe) y el "Símbolo BYMA"."""
+    cedears = obtener_cedears()
+    for fila in filas:
+        t = fila["Ticker"]
+        simbolo = SIMBOLO_CEDEAR.get(t, t).replace("-", "")
+        if fila.get("Mercado") == "Argentina":
+            fila["CEDEAR"] = True      # se compran como acción local
+        else:
+            fila["CEDEAR"] = None if cedears is None else simbolo in cedears
+            if simbolo != t:
+                fila["Símbolo BYMA"] = simbolo
+    if cedears is not None:
+        print(f"CEDEARs: {sum(1 for f in filas if f['CEDEAR'])} de {len(filas)} se pueden comprar en Argentina")
+
+
 def guardar_web(ranking):
     """Guarda el ranking en JSON para la página web."""
     hora_arg = datetime.now(timezone.utc) - timedelta(hours=3)
@@ -387,8 +424,11 @@ def guardar_web(ranking):
         fila["Puesto anterior"] = puestos_ant.get(t)
         fila["Nueva"] = bool(anterior) and t not in anterior
 
+    marcar_cedears(filas)
+    # Noticias solo de las primeras que se pueden comprar
+    con_noticias = [f for f in filas if f["CEDEAR"] is not False][:NOTICIAS_TOP]
     print(f"Bajando noticias de las primeras {NOTICIAS_TOP}...")
-    for fila in filas[:NOTICIAS_TOP]:
+    for fila in con_noticias:
         fila["Noticias"] = obtener_noticias(fila["Ticker"], fila.get("Empresa", ""))
         time.sleep(0.2)
 
@@ -397,7 +437,7 @@ def guardar_web(ranking):
         import noticias_ia
         viejo = json.load(open(ARCHIVO_WEB, encoding="utf-8")).get("acciones", []) if os.path.exists(ARCHIVO_WEB) else []
         cache = noticias_ia.cache_de([n for f in viejo for n in (f.get("Noticias") or [])])
-        noticias_ia.analizar([(f["Ticker"], n) for f in filas[:NOTICIAS_TOP] for n in f.get("Noticias") or []], cache)
+        noticias_ia.analizar([(f["Ticker"], n) for f in con_noticias for n in f.get("Noticias") or []], cache)
     except Exception as e:
         print(f"IA: no se pudo analizar ({e})")
     datos = {

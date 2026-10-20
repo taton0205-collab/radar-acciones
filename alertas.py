@@ -286,6 +286,11 @@ def avisos_de_usuario(posiciones, seguidas, precios, pct_mov=0, hoy=""):
     return avisos
 
 
+def comprables(ranking):
+    """Solo las que tienen CEDEAR en Argentina (si no se sabe, se dejan)."""
+    return [a for a in ranking if a.get("CEDEAR") is not False]
+
+
 def resumen_usuario(nombre, posiciones, seguidas, precios, ranking):
     hoy = ahora_arg().strftime("%d/%m")
     lineas = [f"📊 <b>Resumen del {hoy}</b> · {nombre}"]
@@ -336,7 +341,7 @@ def resumen_usuario(nombre, posiciones, seguidas, precios, ranking):
         lineas.append("\n📅 <b>Próximos balances</b>")
         lineas += [f"• {t}: {DIAS_SEMANA[f.weekday()]} {f.strftime('%d/%m')}" for f, t in sorted(prox)]
 
-    top = sorted(ranking, key=lambda a: -a.get("Puntaje", 0))[:TOP_RESUMEN]
+    top = sorted(comprables(ranking), key=lambda a: -a.get("Puntaje", 0))[:TOP_RESUMEN]
     if top:
         lineas.append("\n🏆 <b>Top del radar</b>")
         lineas += [f"{i}. {a['Ticker']} · {fmt(a['Puntaje'], 0)}" for i, a in enumerate(top, 1)]
@@ -424,11 +429,11 @@ def resumen_semanal(nombre, posiciones, ops_usuario, precios, ranking):
         lineas.append("\n📅 <b>Esta semana presentan balance</b>")
         lineas += [f"• {t}: {DIAS_SEMANA[f.weekday()]} {f.strftime('%d/%m')}" for f, t in sorted(prox)]
 
-    top = sorted(ranking, key=lambda a: -a.get("Puntaje", 0))[:TOP_RESUMEN]
+    top = sorted(comprables(ranking), key=lambda a: -a.get("Puntaje", 0))[:TOP_RESUMEN]
     if top:
         lineas.append("\n🏆 <b>Top del radar</b>")
         lineas += [f"{i}. {a['Ticker']} · {fmt(a['Puntaje'], 0)}" for i, a in enumerate(top, 1)]
-    cruces = sorted([a for a in ranking if a.get("Días desde cruce") is not None and a["Días desde cruce"] <= 7],
+    cruces = sorted([a for a in comprables(ranking) if a.get("Días desde cruce") is not None and a["Días desde cruce"] <= 7],
                     key=lambda a: -a.get("Puntaje", 0))[:3]
     if cruces:
         lineas.append("\n🔥 <b>Cruces alcistas de la semana</b>")

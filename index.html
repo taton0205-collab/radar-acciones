@@ -33,6 +33,8 @@
   header { padding: 22px 0 6px; }
   h1 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
   .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .cedear-tg { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; cursor: pointer; }
+  .sin-cedear { color: var(--low); font-weight: 600; }
   .controls { position: sticky; top: 0; background: var(--bg); padding: 10px 0 8px; z-index: 5; }
   .seg { display: flex; background: var(--chip); border-radius: 10px; padding: 3px; }
   .seg button {
@@ -233,6 +235,7 @@
     </div>
     <input type="search" id="q" placeholder="Buscar ticker o empresa…">
     <div class="chips" id="chips"></div>
+    <label class="cedear-tg"><input type="checkbox" id="soloCedear" checked> Solo las que se pueden comprar en Argentina (CEDEAR)</label>
   </div>
 
   <div class="list" id="list"><div class="msg">Cargando datos…</div></div>
@@ -272,7 +275,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script>
 const TOP_N = 15;
-let datos = [], maxSector = 3, modo = "top", sector = "Todos", busqueda = "";
+let datos = [], maxSector = 3, modo = "top", sector = "Todos", busqueda = "", soloCedear = true;
 let abiertos = new Set();
 
 const $ = (id) => document.getElementById(id);
@@ -293,7 +296,9 @@ const ARG = "🇦🇷 Argentina", ETF = "📦 ETFs";
 const TEC = ["Precio>SMA200", "SMA50>SMA200", "RSI en zona", "Volumen en alza", "Cruce reciente"];
 
 function lista() {
-  let l = datos.map((d, i) => ({ ...d, puesto: i + 1 }));
+  // Si BYMA no respondió (CEDEAR = null) o el dato es viejo, se muestran igual
+  const base = soloCedear ? datos.filter((d) => d.CEDEAR !== false) : datos;
+  let l = base.map((d, i) => ({ ...d, puesto: i + 1 }));
   if (modo === "top" && sector === "Todos" && !busqueda) {
     const cuenta = {};
     l = l.filter((d) => {
@@ -1219,7 +1224,7 @@ function tarjeta(d) {
       <div class="rank">${d.puesto}</div>
       <div class="info">
         <div class="tk">${d.Mercado === "Argentina" ? "🇦🇷 " : ""}${esc(d.Ticker)}${cambio(d)}</div>
-        <div class="name">${esc(d.Empresa)} · ${esc(d.Sector || "s/d")}</div>
+        <div class="name">${esc(d.Empresa)} · ${esc(d.Sector || "s/d")}${d.CEDEAR === false ? ` · <span class="sin-cedear">Sin CEDEAR</span>` : ""}${d.CEDEAR && d["Símbolo BYMA"] ? ` · En BYMA: <b>${esc(d["Símbolo BYMA"])}</b>` : ""}</div>
         <div class="bars">${d["Nota fund"] == null ? "" : barra("Fund.", d["Nota fund"])}${barra("Técn.", d["Nota tec"])}</div>
       </div>
       <div class="score" style="background:color-mix(in srgb, ${colorNota(p)} 16%, transparent);color:${colorNota(p)}">${Math.round(p)}</div>
@@ -1258,7 +1263,8 @@ function tarjeta(d) {
 
 function render() {
   const l = lista();
-  $("list").innerHTML = l.length ? l.map(tarjeta).join("") : `<div class="empty">No hay acciones con ese filtro.</div>`;
+  $("list").innerHTML = l.length ? l.map(tarjeta).join("")
+    : `<div class="empty">No hay acciones con ese filtro.${soloCedear ? "<br>Si buscás una sin CEDEAR, destildá «Solo las que se pueden comprar»." : ""}</div>`;
 }
 
 function chips() {
@@ -1286,6 +1292,7 @@ $("list").addEventListener("click", (e) => {
   abiertos.has(t) ? abiertos.delete(t) : abiertos.add(t);
   card.classList.toggle("open");
 });
+$("soloCedear").onchange = (e) => { soloCedear = e.target.checked; render(); };
 $("chips").addEventListener("click", (e) => {
   const c = e.target.closest(".chip");
   if (!c) return;
