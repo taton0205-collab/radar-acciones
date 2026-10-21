@@ -19,7 +19,8 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import requests
 import yfinance as yf
-from cripto import CRIPTO, es_cripto, precios_vivo
+from cripto import CRIPTO, es_cripto, precios_vivo, volumen_relativo as volumen_cripto
+from zoneinfo import ZoneInfo
 
 ARCHIVO = "precios.json"
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -256,6 +257,68 @@ def guardar_hist(hist, fecha, valor, dias=400):
     return {k: hist[k] for k in sorted(hist)[-dias:]}
 
 
+VOL_DIAS = 20   # días para el volumen "normal"
+
+
+def volumenes(df, simbolo):
+    """Serie de volumen de un símbolo (vacía si no hay)."""
+    try:
+        v = df[simbolo]["Volume"] if isinstance(df.columns, pd.MultiIndex) else df["Volume"]
+        return v.dropna()
+    except Exception:
+        return pd.Series(dtype=float)
+
+
+def volumen_relativo(diario, intradia, simbolo):
+    """Cuántas veces más se opera hoy que un día normal, a esta misma hora (bolsa de EE.UU.).
+    Volumen de hoy (dato diario de Yahoo, se va actualizando) / (promedio de 20 días × parte del día que ya pasó).
+    La parte del día sale de cómo se repartió el volumen cada 15 min en los días anteriores (mediana).
+    None si hoy no abrió o es muy temprano."""
+    vi, vd = volumenes(intradia, simbolo), volumenes(diario, simbolo)
+    if vi.empty or vd.empty:
+        return None
+    ny = ZoneInfo("America/New_York")
+    ahora_ny = datetime.now(ny)
+    vd.index = pd.to_datetime(vd.index).tz_localize(None).normalize()
+    hoy = vd[vd.index.date == ahora_ny.date()]
+    previos = vd[vd.index.date < ahora_ny.date()].tail(VOL_DIAS)
+    if hoy.empty or len(previos) < VOL_DIAS // 2:
+        return None   # hoy no abrió la bolsa o falta historia
+    idx = vi.index.tz_convert(ny) if vi.index.tz is not None else vi.index.tz_localize(ny)
+    fechas, horas = idx.date, idx.time
+    partes = []   # qué parte del volumen del día ya se había operado a esta hora, en los días anteriores
+    for d in sorted(set(fechas[fechas < ahora_ny.date()])):
+        del_dia = fechas == d
+        total = float(vi.values[del_dia].sum())
+        if total > 0:
+            partes.append(float(vi.values[del_dia & (horas <= ahora_ny.time())].sum()) / total)
+    if not partes:
+        return None
+    fraccion = float(pd.Series(partes).median())
+    if fraccion < 0.25:
+        return None   # muy temprano: todavía no dice nada
+    esperado = float(previos.mean()) * fraccion
+    return round(float(hoy.iloc[-1]) / esperado, 2) if esperado > 0 else None
+
+
+def dividendos(ticker):
+    """Dividendos por acción (US$) de los últimos 2 años {fecha de corte: monto} y la próxima fecha de corte."""
+    try:
+        tk = yf.Ticker(ticker)
+        d = tk.dividends
+        hist = {}
+        if len(d):
+            desde = pd.Timestamp.now(tz=d.index.tz) - pd.Timedelta(days=730)
+            hist = {i.strftime("%Y-%m-%d"): round(float(v), 4) for i, v in d.items() if i >= desde}
+        cal = tk.calendar
+        ex = cal.get("Ex-Dividend Date") if isinstance(cal, dict) else None
+        prox = ex.isoformat() if ex and ex >= ahora_arg().date() else None
+        return hist, prox
+    except Exception as e:
+        print(f"  {ticker}: sin dividendos ({e})")
+        return {}, None
+
+
 def cierres(df, simbolo):
     """Serie de cierres diarios de un símbolo (vacía si no hay)."""
     try:
@@ -352,6 +415,12 @@ def main():
         usd, usd_prev = actual_y_previo(usd_d, serie_i(t))
         if ars is None and usd is None:
             print(f"  {t}: sin precios")
+        # Dividendos: cambian poco, se bajan una vez por día
+        vj = viejo.get(t, {})
+        if vj.get("div_dia") == hoy_txt:
+            divs, div_prox = vj.get("dividendos") or {}, vj.get("div_prox")
+        else:
+            divs, div_prox = dividendos(t)
         salida[t] = {
             "simbolo": ced,
             "fuente": fuente,
@@ -363,6 +432,10 @@ def main():
             "ars_hist": guardar_hist(viejo.get(t, {}).get("ars_hist", {}), hoy_txt, ars),
             "balance": proximo_balance(t),
             "noticias": noticias_recientes(t),
+            "vol_ratio": volumen_relativo(diario, intradia, t),
+            "dividendos": divs,
+            "div_prox": div_prox,
+            "div_dia": hoy_txt,
         }
 
     # ---- Cripto: precio en vivo (CoinGecko) en pesos con el dólar cripto (CriptoYa) ----
@@ -385,6 +458,7 @@ def main():
             "ars_hist": guardar_hist(viejo.get(t, {}).get("ars_hist", {}), hoy_txt, ars),
             "balance": None,
             "noticias": noticias_recientes(yahoo),
+            "vol_ratio": volumen_cripto(t),
         }
 
     # IA: buena/mala, impacto y explicación (reusa lo ya analizado)

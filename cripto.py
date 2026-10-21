@@ -49,6 +49,24 @@ def dolar_cripto():
         return None
 
 
+def volumen_relativo(ticker, dias=20):
+    """Volumen de las últimas 24 h dividido el promedio diario de los `dias` anteriores (CoinGecko).
+    1 = normal · 2,5 = dos veces y media lo normal. None si no se pudo calcular."""
+    try:
+        r = requests.get(f"https://api.coingecko.com/api/v3/coins/{CRIPTO[ticker.upper()][1]}/market_chart",
+                         params={"vs_currency": "usd", "days": dias + 1, "interval": "daily"}, timeout=20)
+        r.raise_for_status()
+        vols = [v for _, v in r.json().get("total_volumes", []) if v]
+    except Exception as e:
+        print(f"CoinGecko: sin volumen de {ticker} ({e})")
+        return None
+    if len(vols) < dias // 2 + 1:
+        return None
+    previos = vols[:-1][-dias:]
+    promedio = sum(previos) / len(previos)
+    return round(vols[-1] / promedio, 2) if promedio else None
+
+
 def precios_vivo(tickers, dolar_respaldo=None):
     """{ticker: {"usd", "usd_prev", "ars", "ars_prev", "dolar"}} con el precio de ahora y el de hace 24 h.
     Solo para los tickers que son cripto. Si CoinGecko falla, devuelve {} (no inventa precios)."""

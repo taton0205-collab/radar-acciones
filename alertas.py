@@ -18,7 +18,7 @@ objetivo, se vuelve a activar.
 """
 
 import json
-from cripto import es_cripto, precios_vivo
+from cripto import es_cripto, precios_vivo, volumen_relativo as volumen_cripto
 import secrets
 import os
 from datetime import datetime, timedelta, timezone
@@ -207,6 +207,57 @@ def calcular_posiciones(ops, objs, precios):
             p["stop_clave"] = f"{p['stop']:.2f}"
         salida.append(p)
     return salida
+
+
+VOL_RARO = 2.5    # avisar si se opera 2,5 veces (o más) que lo normal
+DIV_DIAS = 5      # avisar la fecha de corte del dividendo con estos días de anticipación
+
+
+def avisos_volumen(posiciones, seguidas, precios, hoy):
+    """Volumen raro: se opera mucho más que lo normal (un aviso por ticker por día)."""
+    avisos, vistos = [], set()
+    for t, origen in [(p["ticker"], "cartera") for p in posiciones] + [(s["ticker"], "seguimiento") for s in seguidas]:
+        if t in vistos:
+            continue
+        vistos.add(t)
+        pr = precios.get("tickers", {}).get(t, {})
+        vr, precio, prev = pr.get("vol_ratio"), pr.get("ars"), pr.get("ars_prev")
+        if not vr or vr < VOL_RARO:
+            continue
+        cripto = es_cripto(t)
+        var = f" · precio {pct((precio / prev - 1) * 100)} {'en 24 h' if cripto else 'hoy'}" if precio and prev else ""
+        donde = "de tu cartera" if origen == "cartera" else "de tu seguimiento"
+        avisos.append((f"{t}|vol|{hoy}",
+                       f"📊 <b>{t}: volumen raro</b> ({donde})\n"
+                       f"Se está operando <b>{fmt(vr, 1)} veces</b> más que lo normal{' (últimas 24 h)' if cripto else ' a esta hora'}{var}.\n"
+                       f"Suele pasar cuando hay noticias: fijate en la pestaña Noticias."))
+    return avisos
+
+
+def avisos_dividendo(posiciones, precios):
+    """Fecha de corte de un dividendo en los próximos días, para las acciones que tenés."""
+    avisos, hoy = [], ahora_arg().date()
+    ccl = precios.get("ccl")
+    for p in posiciones:
+        pr = precios.get("tickers", {}).get(p["ticker"], {})
+        prox = pr.get("div_prox")
+        if not prox:
+            continue
+        f = datetime.strptime(prox, "%Y-%m-%d").date()
+        if not 0 <= (f - hoy).days <= DIV_DIAS:
+            continue
+        monto = ""
+        divs, usd, ars = pr.get("dividendos") or {}, pr.get("usd"), pr.get("ars")
+        if divs and usd and ars and ccl:
+            ratio = usd * ccl / ars   # acciones por CEDEAR
+            ultimo = divs[max(divs)] / ratio
+            monto = f"\nEl último fue de ≈ US$ {fmt(ultimo, 4)} por CEDEAR (bruto, antes de impuestos)."
+        avisos.append((f"{p['ticker']}|div|{prox}",
+                       f"💵 <b>{p['ticker']} paga dividendo</b>\n"
+                       f"Fecha de corte: <b>{DIAS_SEMANA[f.weekday()]} {f.strftime('%d/%m')}</b>. "
+                       f"Para cobrarlo tenés que tenerlo comprado antes de esa fecha "
+                       f"(en los CEDEARs puede variar 1 o 2 días: confirmalo en tu broker).{monto}"))
+    return avisos
 
 
 def avisos_de_usuario(posiciones, seguidas, precios, pct_mov=0, hoy=""):
@@ -564,6 +615,7 @@ def main():
     for t, v in vivo.items():
         if v.get("ars"):
             precios["tickers"].setdefault(t, {}).update({k: v[k] for k in ("usd", "usd_prev", "ars", "ars_prev")})
+            precios["tickers"][t]["vol_ratio"] = volumen_cripto(t)
 
     def al_dia(t):
         """¿El precio de este ticker es de ahora? Acciones: si precios.json es de hoy. Cripto: si hay precio en vivo."""
@@ -592,12 +644,14 @@ def main():
         pos_al_dia = [p for p in posiciones if al_dia(p["ticker"])]
         seg_al_dia = [s for s in seguidas if al_dia(s["ticker"])]
         if pos_al_dia or seg_al_dia:
-            for clave, texto in avisos_de_usuario(pos_al_dia, seg_al_dia, precios, float(u.get("aviso_movimiento") or 0), hoy):
+            for clave, texto in (avisos_de_usuario(pos_al_dia, seg_al_dia, precios, float(u.get("aviso_movimiento") or 0), hoy)
+                                 + avisos_volumen(pos_al_dia, seg_al_dia, precios, hoy)):
                 if (uid, clave) not in ya and enviar(chat, texto):
                     nuevos.append({"usuario": uid, "clave": clave})
                     ya.add((uid, clave))
 
-        for clave, texto in avisos_nota(posiciones, historial_radar) + avisos_noticias(posiciones, seguidas, precios):
+        for clave, texto in (avisos_nota(posiciones, historial_radar) + avisos_noticias(posiciones, seguidas, precios)
+                             + avisos_dividendo(posiciones, precios)):
             if (uid, clave) not in ya and enviar(chat, texto):
                 nuevos.append({"usuario": uid, "clave": clave})
                 ya.add((uid, clave))

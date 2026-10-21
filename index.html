@@ -705,6 +705,20 @@ function calcularPosiciones() {
       p.efAccion = (pr.usd / (usdC / peso) - 1) * 100;
       p.efDolar = (precios.ccl / (cclC / peso) - 1) * 100;
     }
+    // Dividendos (US$, bruto): lo que pagó por CEDEAR en cada fecha de corte en la que ya lo tenías
+    const ratio = pr.usd && pr.ars && precios?.ccl ? pr.usd * precios.ccl / pr.ars : null;   // acciones por CEDEAR
+    p.divCobrado = 0; p.divRinde = null; p.divProx = null;
+    if (ratio && pr.dividendos && !geckoId(p.ticker)) {
+      for (const [f, usd] of Object.entries(pr.dividendos)) {
+        const tenia = p.movs.filter((o) => o.fecha < f).reduce((s, o) => s + (o.tipo === "compra" ? +o.cantidad : -o.cantidad), 0);
+        if (tenia > 1e-9) p.divCobrado += tenia * usd / ratio;
+      }
+      const hace1 = new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10);
+      const anual = Object.entries(pr.dividendos).filter(([f]) => f >= hace1).reduce((s, [, v]) => s + v, 0);
+      if (anual && pr.usd) p.divRinde = anual / pr.usd * 100;
+      if (pr.div_prox && pr.div_prox >= hoyISO()) p.divProx = pr.div_prox;
+    }
+    p.volRatio = pr.vol_ratio ?? null;
     const ob = objs[p.ticker] || {};
     p.sugerido = !ob.vender_en && !ob.stop && ob.stop_tipo !== "dinamico";
     p.objetivo = ob.vender_en ? +ob.vender_en : p.ppc ? p.ppc * (1 + SUG_VENTA / 100) : null;
@@ -899,6 +913,8 @@ function pintarCartera() {
       <div class="kv"><b>${ars(invertido)}</b><span>Invertido</span></div>
       <div class="kv"><b class="${clsSigno(realizado)}">${realizado >= 0 ? "+" : "−"}${ars(Math.abs(realizado))}</b><span>Ganancia ya realizada</span></div>
     </div>`;
+  const divTotal = posiciones.reduce((s, p) => s + (p.divCobrado || 0), 0);
+  if (divTotal > 0) html += `<div class="sub" style="margin:-4px 0 10px">💵 Dividendos cobrados: <b>${usdTxt(divTotal)}</b> · estimado bruto (antes de impuestos; a los CEDEARs suelen retenerles 30% en EE.UU.)</div>`;
   html += graficoCartera();
   html += distribucion(abiertas);
   html += porBroker(abiertas);
@@ -980,6 +996,18 @@ function balanceTxt(ticker) {
   return `📅 Balance ${dia} ${f.slice(8, 10)}/${f.slice(5, 7)} (${cuando})`;
 }
 
+const VOL_RARO = 2.5;   // igual que alertas.py
+const usdTxt = (v) => "US$ " + Number(v).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function divTxt(p) {
+  if (!p.divCobrado && p.divRinde == null && !p.divProx) return "";
+  const partes = [];
+  if (p.divCobrado > 0) partes.push(`cobrados <b>${usdTxt(p.divCobrado)}</b>`);
+  if (p.divRinde != null) partes.push(`rinde <b>${num(p.divRinde)}%</b> anual`);
+  if (p.divProx) partes.push(`próximo corte <b>${fechaCorta(p.divProx)}</b>`);
+  return `<div class="split">💵 Dividendos: ${partes.join(" · ")}</div>`;
+}
+
 function tarjetaPos(p) {
   const sinPrecio = p.precio == null, cripto = !!geckoId(p.ticker);
   const split = p.efAccion != null ? `<div class="split">Por ${cripto ? "la cripto" : "la acción"} <b class="${clsSigno(p.efAccion)}">${pctTxt(p.efAccion)}</b> · por el dólar ${cripto ? "" : "CCL "}<b class="${clsSigno(p.efDolar)}">${pctTxt(p.efDolar)}</b></div>` : "";
@@ -995,6 +1023,8 @@ function tarjetaPos(p) {
       ${p.nota != null ? `<span>Nota radar <b>${Math.round(p.nota)}</b></span>` : ""}
     </div>
     ${split}
+    ${divTxt(p)}
+    ${p.volRatio >= VOL_RARO ? `<div class="split">📊 <b>Volumen alto</b>: se opera ${num(p.volRatio)} veces más que lo normal${geckoId(p.ticker) ? " (24 h)" : " a esta hora"}</div>` : ""}
     ${balanceTxt(p.ticker) ? `<div class="split">${balanceTxt(p.ticker)}</div>` : ""}
     ${barraPos(p)}
     ${estadoPos(p)}`}
@@ -1390,6 +1420,7 @@ function tarjeta(d) {
         <div class="kv"><b>${fmt(d["Margen FCF %"], "%")}</b><span>Margen flujo caja</span></div>
         <div class="kv"><b>${fmt(d.RSI)}</b><span>RSI</span></div>
         <div class="kv"><b>${fmt(d["% sobre SMA200"], "%")}</b><span>Sobre SMA200</span></div>
+        ${d["Div %"] > 0 ? `<div class="kv"><b>${fmt(d["Div %"], "%")}</b><span>💵 Dividendo anual</span></div>` : ""}
       </div>
       ${d["Nota fund"] == null ? "" : `<h3>Fundamental · ${d["Nota fund"]}</h3>${criterios(FUND, d._notas)}`}
       <h3>Técnico · ${d["Nota tec"]}</h3>${criterios(TEC, d._notas)}

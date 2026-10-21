@@ -519,7 +519,8 @@ def main():
                     info = yf.Ticker(ticker).info
                 except Exception:
                     info = {}
-                info = {"shortName": info.get("shortName") or info.get("longName") or ticker, "sector": "ETF"}
+                info = {"shortName": info.get("shortName") or info.get("longName") or ticker, "sector": "ETF",
+                        "dividendYield": info.get("dividendYield")}
                 datos_fund, crit_fund, notas_fund, crudos = {}, {}, {}, None
             else:
                 info = yf.Ticker(ticker).info
@@ -534,6 +535,7 @@ def main():
             "Empresa": info.get("shortName", ""),
             "Sector": info.get("sector", ""),
             "Mercado": mercado,
+            "Div %": info.get("dividendYield"),   # rendimiento anual por dividendos (Yahoo ya lo da en %)
             "Fund": f"{sum(crit_fund.values())}/{len(crit_fund)}",
             "Tec": f"{sum(crit_tec.values())}/{len(crit_tec)}",
             **datos_tec,
